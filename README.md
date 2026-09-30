@@ -19,7 +19,7 @@
 ## 环境要求
 
 - macOS 13+（推荐 14）
-- Xcode 15+（含 Swift 工具链）
+- Xcode 15+（含 Swift 工具链）；只装 Command Line Tools 也能构建，见下方「没有 Xcode 时」
 
 ## 构建与运行
 
@@ -37,6 +37,22 @@ open build/Overtone.app
 ```bash
 swift run
 ```
+
+## 没有 Xcode 时（SwiftUI 宏插件兜底）
+
+`@State` 在这个 SDK 里是宏，宏的**实现** `libSwiftUIMacros.dylib` 随 Xcode 提供。只装了
+Command Line Tools 的机器上它不存在，直接 `swift build` 会失败：
+
+```
+error: external macro implementation type 'SwiftUIMacros.StateMacro' could not be found
+```
+
+`scripts/build-app.sh` 会检测这种情况，自动构建并使用仓库内的替身插件
+（`tools/SwiftUIMacrosShim`，基于 swift-syntax，把 `@State` 展开成等价的属性包装器代码），
+因此**无需 Xcode 也能打包**。首次构建需要联网拉取 swift-syntax，细节与坑见
+[tools/SwiftUIMacrosShim/README.md](tools/SwiftUIMacrosShim/README.md)。
+
+注意：手工 `swift run` / `swift build` 不会带上插件参数，没装 Xcode 时请用 `./scripts/build-app.sh`。
 
 ## 打包与自动覆盖
 

@@ -380,7 +380,7 @@ struct MainView: View {
         case .album(let album):
             MusicAlbumView(item: album, onBack: pop)
         case .playlist(let playlist):
-            PlaylistDetailView(playlist: playlist, onBack: pop)
+            PlaylistDetailView(playlist: playlist)
         }
     }
 

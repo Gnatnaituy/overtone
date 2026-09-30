@@ -2,7 +2,6 @@ import SwiftUI
 
 struct PlaylistDetailView: View {
     let playlist: Playlist
-    let onBack: () -> Void
 
     @ObservedObject private var store = MusicDataStore.shared
     @ObservedObject private var playlistStore = PlaylistStore.shared
@@ -39,7 +38,10 @@ struct PlaylistDetailView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            BackBar(label: "返回", onBack: onBack)
+            // 播放列表从侧栏直接进入，顶部「返回」没有意义（2026-09-30 去掉）。
+            // 只留一条细拖拽区，窗口仍可从内容区顶部拖动。
+            WindowDragArea()
+                .frame(height: 16)
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     header
