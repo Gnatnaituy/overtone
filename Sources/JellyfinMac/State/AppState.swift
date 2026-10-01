@@ -91,6 +91,15 @@ final class AppState: ObservableObject {
         phase = .signedOut
     }
 
+    /// 设置里关掉「启动时自动连接」：直接停在登录页，不尝试恢复会话（保留已存凭据供手动登录）
+    func prepareWithoutAutoConnect() {
+        didAttemptRestore = true
+        APIClient.shared.reset()
+        user = nil
+        libraries = []
+        phase = .signedOut
+    }
+
     func loadLibraries() async {
         guard let userId = APIClient.shared.user?.id else { return }
         do {

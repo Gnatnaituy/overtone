@@ -58,6 +58,8 @@ struct BaseItemDto: Codable, Identifiable {
     let album: String?
     /// 播放列表条目 id（用于删除服务器播放列表中的条目）
     let playlistItemId: String?
+    /// 入库时间（首页「最近添加」排序用，需在 Fields 中显式请求）
+    let dateCreated: String?
 }
 
 extension BaseItemDto: Hashable {

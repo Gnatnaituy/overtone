@@ -173,6 +173,13 @@ final class MusicPlayerModel: ObservableObject {
         }
     }
 
+    /// 键盘 / VoiceOver 微调：直接定位到指定秒数（可访问性 ±5s）
+    func seekTo(position seconds: Double) {
+        let clamped = min(max(seconds, 0), max(progress.duration, 0))
+        progress.position = clamped
+        Task { await seek(to: clamped) }
+    }
+
     /// 迷你条拖动进度：实时更新显示位置，松手后真正跳转
     func scrub(ratio: Double) {
         isSeeking = true
@@ -285,7 +292,12 @@ final class MusicPlayerModel: ObservableObject {
         progress.position = 0
         isPlaying = false
 
-        reporter = PlaybackReporter(itemId: track.id, mediaSourceId: nil, playMethod: "DirectPlay")
+        reporter = PlaybackReporter(
+            itemId: track.id,
+            mediaSourceId: nil,
+            playMethod: AppSettings.shared.requiresTranscode ? "Transcode" : "DirectPlay",
+            interval: AppSettings.shared.reportInterval
+        )
         reporter?.start(position: 0)
 
         if let endObserver {
@@ -308,17 +320,25 @@ final class MusicPlayerModel: ObservableObject {
         updateNowPlayingInfo()
     }
 
-    /// 新曲目 0.4s 音量淡入，消除换曲"咔哒"感
+    /// 换曲淡入（时长来自设置页「交叉淡入」，0 表示不淡入），消除换曲"咔哒"感
     private func startFadeIn() {
         fadeTimer?.invalidate()
+        fadeTimer = nil
         let target = Float(volume)
+        let duration = AppSettings.shared.fadeDuration
+        guard duration > 0 else {
+            player.volume = target
+            return
+        }
+        let tick = 0.05
+        let totalSteps = max(Int(duration / tick), 1)
         var steps = 0
-        fadeTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+        fadeTimer = Timer.scheduledTimer(withTimeInterval: tick, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
                 steps += 1
-                self.player.volume = min(target, target * Float(steps) / 8.0)
-                if steps >= 8 {
+                self.player.volume = min(target, target * Float(steps) / Float(totalSteps))
+                if steps >= totalSteps {
                     self.fadeTimer?.invalidate()
                     self.fadeTimer = nil
                 }
@@ -385,7 +405,25 @@ final class MusicPlayerModel: ObservableObject {
             url: base.appendingPathComponent("/Audio/\(track.id)/stream"),
             resolvingAgainstBaseURL: false
         ) else { return nil }
-        var query: [URLQueryItem] = [URLQueryItem(name: "static", value: "true")]
+
+        let settings = AppSettings.shared
+        var query: [URLQueryItem] = []
+
+        if settings.requiresTranscode {
+            // 关闭「直连优先」或选了非原始音质：交给服务器转码到目标码率
+            query.append(URLQueryItem(name: "static", value: "false"))
+            query.append(URLQueryItem(name: "audioCodec", value: "mp3"))
+            query.append(URLQueryItem(name: "transcodeContainer", value: "mp3"))
+            if let bitrate = settings.quality.bitrate {
+                query.append(URLQueryItem(name: "maxAudioBitrate", value: String(bitrate * 1000)))
+            }
+            if settings.volumeNormalization {
+                query.append(URLQueryItem(name: "enableAudioNormalization", value: "true"))
+            }
+        } else {
+            query.append(URLQueryItem(name: "static", value: "true"))
+        }
+
         if let token = APIClient.shared.token {
             query.append(URLQueryItem(name: "api_key", value: token))
         }

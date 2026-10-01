@@ -5,6 +5,7 @@ import Darwin
 struct JellyfinApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var appState = AppState.shared
+    @ObservedObject private var settings = AppSettings.shared
 
     init() {
         setvbuf(stdout, nil, _IONBF, 0)
@@ -15,9 +16,17 @@ struct JellyfinApp: App {
         WindowGroup("Overtone") {
             RootView()
                 .environmentObject(appState)
-                .frame(minWidth: 720, minHeight: 480)
+                .environmentObject(settings)
+                .frame(minWidth: 520, minHeight: 480)
         }
         .windowStyle(.hiddenTitleBar)
+
+        // macOS 标准设置窗口：系统自带「设置…」菜单项与 ⌘, 快捷键
+        Settings {
+            SettingsView()
+                .environmentObject(appState)
+                .environmentObject(settings)
+        }
     }
 }
 
@@ -25,12 +34,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
-        // 白色主题：跟随系统浅色外观
+        // 浅色主题：跟随系统浅色外观（深色主题为后续版本，令牌层已预留分支）
         NSApp.appearance = NSAppearance(named: .aqua)
 
         // 会话恢复由这里驱动（不绑定视图生命周期，避免被取消）
         Task { @MainActor in
-            await AppState.shared.restoreSession()
+            if AppSettings.shared.autoConnect {
+                await AppState.shared.restoreSession()
+            } else {
+                AppState.shared.prepareWithoutAutoConnect()
+            }
         }
 
         // 窗口每次成为主窗口时应用定制（覆盖 SwiftUI 对按钮显示状态的重置）
@@ -39,7 +52,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil,
             queue: .main
         ) { note in
-            guard let window = note.object as? NSWindow else { return }
+            // 只作用于承载 RootView 的主窗口：设置窗口保留系统标准标题栏与红黄绿三键
+            guard let window = note.object as? NSWindow,
+                  window === WindowManager.mainWindow else { return }
             WindowManager.apply(window)
         }
 
@@ -76,10 +91,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return event
         }
     }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        // 「关闭窗口时继续播放」关闭时，关掉窗口即退出
+        !AppSettings.shared.continuePlayingOnClose
+    }
 }
 
 struct RootView: View {
     @EnvironmentObject private var appState: AppState
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @ObservedObject private var settings = AppSettings.shared
 
     var body: some View {
         Group {
@@ -91,7 +113,10 @@ struct RootView: View {
         // 延伸到隐藏标题栏区域（fullSizeContentView），避免顶部露出透明条
         .ignoresSafeArea()
         .background(WindowConfigurator())
-        .animation(.easeInOut(duration: 0.3), value: appState.phase)
-        .background(Theme.background)
+        .animation(Theme.Motion.base, value: appState.phase)
+        .background(Theme.canvas)
+        // 系统「减少动态效果」或应用内设置任一开启即生效（§7）
+        .environment(\.appReduceMotion, systemReduceMotion || settings.reduceMotion)
+        .toastHost()
     }
 }

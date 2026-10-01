@@ -11,28 +11,25 @@ struct TrackInfoView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
+            HStack(spacing: Theme.Spacing.lg) {
                 RemoteImage(url: track.artworkURL(width: 128), contentMode: .fill)
                     .frame(width: 44, height: 44)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.border))
-                VStack(alignment: .leading, spacing: 2) {
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.sm))
+                VStack(alignment: .leading, spacing: 1) {
                     Text(track.name ?? "")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Theme.primaryText)
+                        .textStyle(.bodySM, weight: .semibold, color: Theme.textPrimary)
                         .lineLimit(2)
                     Text([track.album, track.albumArtist].compactMap { $0 }.joined(separator: " · "))
-                        .font(.system(size: 11))
-                        .foregroundStyle(Theme.secondaryText)
+                        .textStyle(.caption, color: Theme.textSecondary)
                         .lineLimit(1)
                 }
             }
 
-            Rectangle().fill(Theme.divider).frame(height: 1)
+            Rectangle().fill(Theme.borderSubtle).frame(height: 1)
 
             if let source = vm.mediaSource {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: Theme.Spacing.md) {
                     if let container = source.container, !container.isEmpty {
                         infoRow("容器格式", container.uppercased())
                     }
@@ -62,28 +59,31 @@ struct TrackInfoView: View {
                 ProgressView()
                     .controlSize(.small)
                     .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 10)
+                    .padding(.vertical, Theme.Spacing.lg)
             } else if let error = vm.errorMessage {
-                Text(error)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.red)
+                HStack(spacing: Theme.Spacing.sm) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11))
+                    Text(error)
+                        .textStyle(.caption)
+                }
+                .foregroundStyle(Theme.danger)
             }
         }
-        .padding(16)
+        .padding(Theme.Spacing.xl)
         .frame(width: 280)
         .task { await vm.load() }
     }
 
     private func infoRow(_ label: String, _ value: String) -> some View {
-        HStack {
+        HStack(spacing: Theme.Spacing.md) {
             Text(label)
-                .font(.system(size: 12))
-                .foregroundStyle(Theme.secondaryText)
-            Spacer()
+                .textStyle(.footnote, color: Theme.textSecondary)
+            Spacer(minLength: 0)
             Text(value)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Theme.primaryText)
+                .textStyle(.footnote, weight: .medium, color: Theme.textPrimary)
         }
+        .accessibilityElement(children: .combine)
     }
 
     private static func formatBytes(_ bytes: Int64) -> String {

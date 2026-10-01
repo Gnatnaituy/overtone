@@ -31,6 +31,8 @@ else
 fi
 
 echo "▶ 编译 release..."
+# LC_BUILD_VERSION 的 sdk 字段决定 macOS 是否套用当前设计语言（Liquid Glass），
+# 由 Package.swift 的 linkerSettings 显式传入 -platform_version 修正，这里无需额外处理。
 # --disable-sandbox：部分 macOS 环境下 SwiftPM 内部 sandbox-exec 会被系统拒绝
 # ${MACRO_FLAGS[@]+…}：macOS 自带的 bash 3.2 在 set -u 下不接受空数组展开
 swift build -c release --disable-sandbox ${MACRO_FLAGS[@]+"${MACRO_FLAGS[@]}"}

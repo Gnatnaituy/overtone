@@ -133,6 +133,33 @@ final class PlaylistStore: ObservableObject {
         }
     }
 
+    /// 拖动排序 / ⌘↑⌘↓ 上下移（仅本地播放列表；顺序变更后整表推送到服务器）
+    func moveTracks(in playlist: Playlist, from source: IndexSet, to destination: Int) {
+        guard !playlist.isSmart else { return }
+        guard let i = playlists.firstIndex(where: { $0.id == playlist.id }) else { return }
+        playlists[i].trackIds.move(fromOffsets: source, toOffset: destination)
+        save()
+        if playlists[i].serverId != nil {
+            let snapshot = playlists[i]
+            Task { try? await PlaylistSyncService.shared.pushRename(snapshot) }
+        }
+    }
+
+    /// 上移 / 下移一位（键盘 ⌘↑ / ⌘↓ 用）
+    func shiftTrack(in playlist: Playlist, trackId: String, offset: Int) {
+        guard !playlist.isSmart else { return }
+        guard let i = playlists.firstIndex(where: { $0.id == playlist.id }) else { return }
+        guard let current = playlists[i].trackIds.firstIndex(of: trackId) else { return }
+        let target = current + offset
+        guard target >= 0, target < playlists[i].trackIds.count else { return }
+        playlists[i].trackIds.swapAt(current, target)
+        save()
+        if playlists[i].serverId != nil {
+            let snapshot = playlists[i]
+            Task { try? await PlaylistSyncService.shared.pushRename(snapshot) }
+        }
+    }
+
     // MARK: - 同步导入 / 更新 / 绑定
 
     func importFromServer(serverId: String, name: String, trackIds: [String], itemMap: [String: String]) {

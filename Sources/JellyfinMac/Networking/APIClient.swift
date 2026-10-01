@@ -35,7 +35,12 @@ final class APIClient {
         config.timeoutIntervalForRequest = 30
         return URLSession(configuration: config)
     }()
-    private let clientName = "Overtone"
+    /// 客户端名可在登录页「高级选项」里改（写入 UserDefaults，服务端会话按此显示设备）
+    private var clientName: String {
+        let custom = UserDefaults.standard.string(forKey: "clientName")?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (custom?.isEmpty == false ? custom! : "Overtone")
+    }
     private let deviceName = "Mac"
     private let deviceId = "mac-\(UUID().uuidString)"
     private let appVersion = "1.0.0"

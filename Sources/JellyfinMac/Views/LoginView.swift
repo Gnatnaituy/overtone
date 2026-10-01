@@ -1,229 +1,372 @@
 import SwiftUI
 
+/// 登录页（重做，§4.1）：左右分栏（品牌区 360 + 表单卡 400），窄窗（<720）降级单列。
 struct LoginView: View {
     @EnvironmentObject private var appState: AppState
 
-    @State private var server = UserDefaults.standard.string(forKey: "serverURL") ?? ""
+    @State private var host = UserDefaults.standard.string(forKey: "serverHost") ?? ""
+    @State private var scheme = UserDefaults.standard.string(forKey: "serverScheme") ?? "http"
+    @State private var port = UserDefaults.standard.string(forKey: "serverPort") ?? ""
+    @State private var clientName = UserDefaults.standard.string(forKey: "clientName") ?? "Overtone"
     @State private var username = UserDefaults.standard.string(forKey: "username") ?? ""
     @State private var password = ""
     @State private var isConnecting = false
     @State private var errorMessage: String?
-    // 本 SDK 的 macOS 13 目标无泛型版 .focused(Value?)，用三个 Bool 焦点位模拟焦点链
-    @FocusState private var serverFocused: Bool
-    @FocusState private var usernameFocused: Bool
-    @FocusState private var passwordFocused: Bool
+    @State private var showAdvanced = false
     @State private var showContent = false
-    /// 错误抖动偏移（0 → ±10 → 0）
     @State private var shakeOffset: CGFloat = 0
 
+    // 本 SDK 的 macOS 13 目标无泛型版 .focused(Value?)，用 Bool 焦点位模拟焦点链
+    @FocusState private var hostFocused: Bool
+    @FocusState private var usernameFocused: Bool
+    @FocusState private var passwordFocused: Bool
+
     var body: some View {
-        ZStack {
-            Theme.background.ignoresSafeArea()
-            auroraGlow
-
-            VStack(spacing: 34) {
-                logo
-                loginForm
-                footnote
+        GeometryReader { geo in
+            let isNarrow = geo.size.width < 720
+            Group {
+                if isNarrow { narrowLayout } else { splitLayout }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(minWidth: 720, minHeight: 560)
+        .background(Theme.canvas.ignoresSafeArea())
+        .frame(minWidth: 520, minHeight: 480)
+        // 顶部让出红黄绿三键的位置，并让这一条可以拖动窗口
+        .overlay(alignment: .top) {
+            WindowDragArea()
+                .frame(height: Theme.Size.windowChromeHeight)
+        }
         .onAppear {
-            withAnimation(Theme.bouncy) { showContent = true }
-            // 下一轮 runloop 聚焦（视图已安装后）：已有服务器地址则直接聚焦到用户名
+            withAnimation(Theme.Motion.base) { showContent = true }
             DispatchQueue.main.async {
-                if server.isEmpty { serverFocused = true } else { usernameFocused = true }
+                if host.isEmpty { hostFocused = true } else { usernameFocused = true }
             }
         }
     }
 
-    // MARK: - 表单
+    // MARK: - 布局
 
-    private var loginForm: some View {
-        VStack(spacing: 14) {
-            field(index: 0) { serverField }
-            field(index: 1) { usernameField }
-            field(index: 2) { passwordField }
+    private var splitLayout: some View {
+        HStack(spacing: 0) {
+            brandPanel
+                .frame(width: 360)
+                .frame(maxHeight: .infinity)
 
-            if let errorMessage {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.circle.fill")
-                        .font(.system(size: 12))
-                    Text(errorMessage)
-                        .font(.system(size: 13))
-                }
-                .foregroundStyle(.red)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .transition(.move(edge: .top).combined(with: .opacity))
-            }
+            Rectangle().fill(Theme.borderSubtle).frame(width: 1)
 
-            field(index: 3) {
-                Button(action: connect) {
-                    HStack(spacing: 8) {
-                        if isConnecting {
-                            ProgressView()
-                                .controlSize(.small)
-                                .tint(.white)
-                        } else {
-                            Image(systemName: "arrow.right.circle.fill")
-                        }
-                        Text(isConnecting ? "连接中…" : "连接服务器")
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(PrimaryButtonStyle())
-                .disabled(isConnecting)
-            }
-        }
-        .frame(width: 380)
-        .offset(x: shakeOffset)
-        .animation(.easeInOut(duration: 0.2), value: errorMessage)
-    }
-
-    private var footnote: some View {
-        Text("连接你自己的 Jellyfin 服务器 · 播放你的音乐库")
-            .font(.system(size: 12))
-            .foregroundStyle(Theme.secondaryText)
-            .opacity(showContent ? 1 : 0)
-            .animation(.easeOut(duration: 0.5).delay(0.5), value: showContent)
-    }
-
-    // MARK: - 输入框（拆分避免大表达式类型推断超时）
-
-    private var serverField: some View {
-        FlatFieldBox {
-            HStack(spacing: 8) {
-                Image(systemName: "server.rack")
-                    .foregroundStyle(Theme.secondaryText)
-                TextField("服务器地址", text: $server)
-                    .textFieldStyle(.plain)
-                    .focused($serverFocused)
-                    .onSubmit { usernameFocused = true }
-            }
-        }
-        .overlay(focusBorder(highlight: serverFocused))
-    }
-
-    private var usernameField: some View {
-        FlatFieldBox {
-            HStack(spacing: 8) {
-                Image(systemName: "person.fill")
-                    .foregroundStyle(Theme.secondaryText)
-                TextField("用户名", text: $username)
-                    .textFieldStyle(.plain)
-                    .focused($usernameFocused)
-                    .onSubmit { passwordFocused = true }
-            }
-        }
-        .overlay(focusBorder(highlight: usernameFocused))
-    }
-
-    private var passwordField: some View {
-        FlatFieldBox {
-            HStack(spacing: 8) {
-                Image(systemName: "lock.fill")
-                    .foregroundStyle(Theme.secondaryText)
-                SecureField("密码", text: $password)
-                    .textFieldStyle(.plain)
-                    .focused($passwordFocused)
-                    .onSubmit { connect() }
-            }
-        }
-        .overlay(focusBorder(highlight: passwordFocused))
-    }
-
-    // MARK: - 入场错落动画
-
-    @ViewBuilder
-    private func field<Content: View>(index: Int, @ViewBuilder content: () -> Content) -> some View {
-        content()
-            .opacity(showContent ? 1 : 0)
-            .offset(y: showContent ? 0 : 16)
-            .animation(
-                .spring(response: 0.45, dampingFraction: 0.82).delay(0.15 + Double(index) * 0.08),
-                value: showContent
-            )
-    }
-
-    private func focusBorder(highlight: Bool) -> some View {
-        RoundedRectangle(cornerRadius: 10)
-            .strokeBorder(highlight ? Theme.accentEnd : .clear, lineWidth: 1.5)
-    }
-
-    /// 左右往复抖动 3 次
-    private func shake() {
-        withAnimation(Animation.easeInOut(duration: 0.07).repeatCount(6, autoreverses: true)) {
-            shakeOffset = 10
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            withAnimation(.easeOut(duration: 0.1)) { shakeOffset = 0 }
+            formPanel(isNarrow: false)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
-    // MARK: - Logo
-
-    private var logo: some View {
-        VStack(spacing: 14) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 22)
-                    .fill(Theme.accentGradient)
-                    .frame(width: 78, height: 78)
-                    .shadow(color: Theme.accentStart.opacity(0.28), radius: 16, y: 7)
-                Image(systemName: "music.note")
-                    .font(.system(size: 32, weight: .bold))
-                    .foregroundStyle(.white)
-            }
-            .scaleEffect(showContent ? 1 : 0.7)
-            .opacity(showContent ? 1 : 0)
-            .animation(Theme.bouncy, value: showContent)
-            VStack(spacing: 4) {
-                Text("Overtone")
-                    .font(.system(size: 28, weight: .bold))
-                    .foregroundStyle(Theme.primaryText)
-                Text("登录你的音乐库")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.secondaryText)
-            }
-            .opacity(showContent ? 1 : 0)
-            .offset(y: showContent ? 0 : 10)
-            .animation(.easeOut(duration: 0.45).delay(0.25), value: showContent)
+    private var narrowLayout: some View {
+        VStack(spacing: Theme.Spacing.section) {
+            brandMark
+            formPanel(isNarrow: true)
         }
+        .padding(Theme.Spacing.section)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.surface)
     }
 
-    // MARK: - 极光背景（缓慢漂移的柔和光斑）
+    // MARK: - 左：品牌区（360pt）
 
-    private var auroraGlow: some View {
+    private var brandPanel: some View {
         ZStack {
-            GlowBlob(
-                color: Theme.accentStart.opacity(0.10),
-                diameter: 480,
-                start: CGPoint(x: -280, y: -240),
-                end: CGPoint(x: -230, y: -190)
+            Theme.canvas
+            glowLayer
+
+            VStack(alignment: .leading, spacing: 0) {
+                Spacer(minLength: 0)
+
+                brandMark
+
+                Text("Overtone")
+                    .textStyle(.display, color: Theme.textPrimary)
+                    .padding(.top, Theme.Spacing.xl)
+
+                Text("登录你的音乐库")
+                    .textStyle(.body, color: Theme.textSecondary)
+                    .padding(.top, Theme.Spacing.xs)
+
+                VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
+                    featureRow("直连优先，兼容时直接播放原始文件")
+                    featureRow("播放进度多端同步")
+                    featureRow("独立音乐模块，页面间不中断")
+                }
+                .padding(.top, Theme.Spacing.xxxl)
+
+                Spacer(minLength: 0)
+            }
+            .padding(36)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .clipped()
+    }
+
+    private var brandMark: some View {
+        RoundedRectangle(cornerRadius: Theme.Radius.xl)
+            .fill(Theme.brandGradient)
+            .frame(width: 72, height: 72)
+            .overlay(
+                Image(systemName: "music.note")
+                    .font(.system(size: 30, weight: .semibold))
+                    .foregroundStyle(.white)
             )
-            GlowBlob(
-                color: Theme.accentEnd.opacity(0.09),
-                diameter: 520,
-                start: CGPoint(x: 300, y: 260),
-                end: CGPoint(x: 240, y: 220)
-            )
-            GlowBlob(
-                color: Color(hex: 0x5BC8C8).opacity(0.06),
-                diameter: 380,
-                start: CGPoint(x: 260, y: -280),
-                end: CGPoint(x: 320, y: -220)
-            )
+            .elevation(.e2)
+            .scaleEffect(showContent ? 1 : 0.86)
+            .opacity(showContent ? 1 : 0)
+            .animation(Theme.Motion.spring, value: showContent)
+    }
+
+    private func featureRow(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: Theme.Spacing.md) {
+            Image(systemName: "checkmark")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(Theme.tealText)
+                .padding(.top, 2)
+            Text(text)
+                .textStyle(.bodySM, color: Theme.textSecondary)
+        }
+    }
+
+    /// 极低透明度光晕（brandGradient + 泛音青）
+    private var glowLayer: some View {
+        ZStack {
+            Circle()
+                .fill(Theme.brand500.opacity(0.18))
+                .frame(width: 280, height: 280)
+                .blur(radius: 70)
+                .offset(x: -90, y: -70)
+            Circle()
+                .fill(Theme.overtoneTeal.opacity(0.16))
+                .frame(width: 250, height: 250)
+                .blur(radius: 70)
+                .offset(x: 90, y: 170)
         }
         .allowsHitTesting(false)
     }
 
+    // MARK: - 右：表单卡（400pt）
+
+    private func formPanel(isNarrow: Bool) -> some View {
+        VStack {
+            Spacer(minLength: 0)
+            formCard(isNarrow: isNarrow)
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(36)
+        .background(isNarrow ? Theme.surface : Theme.surface)
+    }
+
+    private func formCard(isNarrow: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("连接服务器")
+                .textStyle(.title3, color: Theme.textPrimary)
+            Text("填写你的 Jellyfin 服务器地址与账号")
+                .textStyle(.footnote, color: Theme.textSecondary)
+                .padding(.top, Theme.Spacing.xs)
+                .padding(.bottom, Theme.Spacing.xxl)
+
+            VStack(spacing: 14) {
+                hostField
+                usernameField
+                passwordField
+
+                if let errorMessage {
+                    HStack(spacing: Theme.Spacing.sm) {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .font(.system(size: 12))
+                        Text(errorMessage)
+                            .textStyle(.bodySM)
+                    }
+                    .foregroundStyle(Theme.danger)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .transition(.opacity)
+                }
+
+                connectButton
+
+                advancedSection
+            }
+        }
+        .offset(x: shakeOffset)
+        .padding(28)
+        .frame(width: isNarrow ? 380 : 400)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.Radius.xl)
+                .fill(Theme.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.xl)
+                .strokeBorder(Theme.borderSubtle)
+        )
+        .elevation(.e2)
+        .opacity(showContent ? 1 : 0)
+        .offset(y: showContent ? 0 : 12)
+        .animation(Theme.Motion.base, value: showContent)
+        .animation(Theme.Motion.micro, value: errorMessage)
+    }
+
+    // MARK: 字段
+
+    private var hostField: some View {
+        TokenField(height: Theme.Size.formFieldHeight, isFocused: hostFocused) {
+            HStack(spacing: Theme.Spacing.md) {
+                Image(systemName: "server.rack")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.textSecondary)
+                TextField("服务器地址，如 192.168.1.10", text: $host)
+                    .textFieldStyle(.plain)
+                    .textStyle(.bodySM, color: Theme.textPrimary)
+                    .focused($hostFocused)
+                    .onSubmit { usernameFocused = true }
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var usernameField: some View {
+        TokenField(height: Theme.Size.formFieldHeight, isFocused: usernameFocused) {
+            HStack(spacing: Theme.Spacing.md) {
+                Image(systemName: "person.fill")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.textSecondary)
+                TextField("用户名", text: $username)
+                    .textFieldStyle(.plain)
+                    .textStyle(.bodySM, color: Theme.textPrimary)
+                    .focused($usernameFocused)
+                    .onSubmit { passwordFocused = true }
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var passwordField: some View {
+        TokenField(height: Theme.Size.formFieldHeight, isFocused: passwordFocused) {
+            HStack(spacing: Theme.Spacing.md) {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.textSecondary)
+                SecureField("密码", text: $password)
+                    .textFieldStyle(.plain)
+                    .textStyle(.bodySM, color: Theme.textPrimary)
+                    .focused($passwordFocused)
+                    .onSubmit { connect() }
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var connectButton: some View {
+        Button(action: connect) {
+            HStack(spacing: Theme.Spacing.md) {
+                if isConnecting {
+                    ProgressView().controlSize(.small).tint(.white)
+                } else {
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                Text(isConnecting ? "连接中…" : "连接服务器")
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(PrimaryButtonStyle())
+        .disabled(isConnecting)
+        .padding(.top, Theme.Spacing.xs)
+    }
+
+    // MARK: 高级选项（协议 / 端口 / 客户端名）
+
+    private var advancedSection: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
+            Button {
+                withAnimation(Theme.Motion.base) { showAdvanced.toggle() }
+            } label: {
+                HStack(spacing: Theme.Spacing.sm) {
+                    Image(systemName: showAdvanced ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("高级选项")
+                        .textStyle(.footnote, weight: .medium, color: Theme.textSecondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(showAdvanced ? "收起高级选项" : "展开高级选项")
+
+            if showAdvanced {
+                VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
+                    HStack(spacing: Theme.Spacing.lg) {
+                        Text("协议")
+                            .textStyle(.footnote, color: Theme.textSecondary)
+                            .frame(width: 56, alignment: .leading)
+                        SegmentedControl(
+                            segments: [.init("http", "http"), .init("https", "https")],
+                            selection: $scheme
+                        )
+                    }
+
+                    HStack(spacing: Theme.Spacing.lg) {
+                        Text("端口")
+                            .textStyle(.footnote, color: Theme.textSecondary)
+                            .frame(width: 56, alignment: .leading)
+                        TokenField {
+                            TextField("8096（留空用默认）", text: $port)
+                                .textFieldStyle(.plain)
+                                .textStyle(.bodySM, color: Theme.textPrimary)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+
+                    HStack(spacing: Theme.Spacing.lg) {
+                        Text("客户端名")
+                            .textStyle(.footnote, color: Theme.textSecondary)
+                            .frame(width: 56, alignment: .leading)
+                        TokenField {
+                            TextField("Overtone", text: $clientName)
+                                .textFieldStyle(.plain)
+                                .textStyle(.bodySM, color: Theme.textPrimary)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                }
+                .transition(.opacity)
+            }
+        }
+        .padding(.top, Theme.Spacing.md)
+    }
+
+    // MARK: - 动作
+
+    /// 由 协议 + 主机 + 端口 组装服务器地址（主机里已含 scheme 时以输入为准）
+    private var composedServer: String {
+        let trimmedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedHost.isEmpty else { return "" }
+        if trimmedHost.contains("://") { return trimmedHost }
+
+        var value = "\(scheme)://\(trimmedHost)"
+        let trimmedPort = port.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedPort.isEmpty, !trimmedHost.contains(":") {
+            value += ":\(trimmedPort)"
+        }
+        return value
+    }
+
     private func connect() {
         errorMessage = nil
-        let trimmedServer = server.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedServer.isEmpty, !username.isEmpty, !password.isEmpty else {
+        let server = composedServer
+        guard !server.isEmpty, !username.isEmpty, !password.isEmpty else {
             errorMessage = "请填写服务器地址、用户名和密码"
             shake()
             return
         }
+
+        UserDefaults.standard.set(host, forKey: "serverHost")
+        UserDefaults.standard.set(scheme, forKey: "serverScheme")
+        UserDefaults.standard.set(port, forKey: "serverPort")
+        UserDefaults.standard.set(clientName, forKey: "clientName")
+
         isConnecting = true
         Task {
             do {
@@ -235,27 +378,14 @@ struct LoginView: View {
             isConnecting = false
         }
     }
-}
 
-/// 缓慢往返漂移的柔光斑
-private struct GlowBlob: View {
-    let color: Color
-    let diameter: CGFloat
-    let start: CGPoint
-    let end: CGPoint
-
-    @State private var drift = false
-
-    var body: some View {
-        Circle()
-            .fill(color)
-            .frame(width: diameter, height: diameter)
-            .blur(radius: 130)
-            .offset(x: drift ? end.x : start.x, y: drift ? end.y : start.y)
-            .onAppear {
-                withAnimation(.easeInOut(duration: 9).repeatForever(autoreverses: true)) {
-                    drift = true
-                }
-            }
+    /// 左右往复抖动 3 次
+    private func shake() {
+        withAnimation(Animation.easeInOut(duration: 0.07).repeatCount(6, autoreverses: true)) {
+            shakeOffset = 10
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            withAnimation(Theme.Motion.micro) { shakeOffset = 0 }
+        }
     }
 }
