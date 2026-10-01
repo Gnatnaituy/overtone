@@ -165,7 +165,8 @@ final class MusicDataStore: ObservableObject {
             URLQueryItem(name: "Recursive", value: "true"),
             URLQueryItem(name: "SortBy", value: "SortName"),
             URLQueryItem(name: "SortOrder", value: "Ascending"),
-            URLQueryItem(name: "Fields", value: "Overview"),
+            // DateCreated 供首页「最近添加」排序（Fields 需显式请求）
+            URLQueryItem(name: "Fields", value: "Overview,DateCreated"),
         ]
     }
 }

@@ -18,11 +18,14 @@ struct PlaybackReport: Codable {
     }
 }
 
-/// 向 Jellyfin 上报播放进度（每 10 秒一次 + 暂停/停止时立即上报）
+/// 向 Jellyfin 上报播放进度（默认每 10 秒一次 + 暂停/停止时立即上报；
+/// 间隔可在设置页「播放 · 进度上报间隔」调整）
 final class PlaybackReporter {
     private let itemId: String
     private let mediaSourceId: String?
     private let playMethod: String
+    /// 周期上报间隔（秒）
+    private let interval: TimeInterval
     private var timer: Timer?
     private var lastPosition: Double = 0
     private var isPaused = false
@@ -33,16 +36,17 @@ final class PlaybackReporter {
         return e
     }()
 
-    init(itemId: String, mediaSourceId: String?, playMethod: String) {
+    init(itemId: String, mediaSourceId: String?, playMethod: String, interval: TimeInterval = 10) {
         self.itemId = itemId
         self.mediaSourceId = mediaSourceId
         self.playMethod = playMethod
+        self.interval = max(interval, 1)
     }
 
     func start(position: Double) {
         lastPosition = position
         Task { await report(.playing) }
-        timer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { await self?.report(.progress) }
         }
     }

@@ -83,7 +83,8 @@ final class MusicAlbumViewModel: ObservableObject {
                 query: [
                     URLQueryItem(name: "ParentId", value: albumId),
                     URLQueryItem(name: "IncludeItemTypes", value: "Audio"),
-                    URLQueryItem(name: "SortBy", value: "SortName"),
+                    // 专辑内按碟号 + 音轨号排序（曲目表顺序与唱片一致）
+                    URLQueryItem(name: "SortBy", value: "ParentIndexNumber,IndexNumber,SortName"),
                     URLQueryItem(name: "SortOrder", value: "Ascending"),
                     URLQueryItem(name: "Fields", value: "Overview"),
                 ]

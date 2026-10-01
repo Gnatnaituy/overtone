@@ -1,11 +1,16 @@
 import SwiftUI
 
-/// 播放列表页：网格展示本地/智能播放列表，点击进入详情
+/// 播放列表页（重做）：统一顶栏 + 网格/列表视图切换 + 新建 / 智能列表。
 struct PlaylistsView: View {
+    let sizeClass: LayoutSizeClass
     let onOpenPlaylist: (Playlist) -> Void
+    @Binding var searchQuery: String
+    let searchFocusRequest: Int
+    let onSearchSubmit: () -> Void
 
     @ObservedObject private var playlistStore = PlaylistStore.shared
     @ObservedObject private var store = MusicDataStore.shared
+    @State private var viewMode: LibraryViewMode = .grid
     @State private var showCreatePlaylist = false
     @State private var showCreateSmart = false
     @State private var newPlaylistName = ""
@@ -14,216 +19,126 @@ struct PlaylistsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            ScrollView {
-                PlaylistGrid(onOpenPlaylist: onOpenPlaylist)
-                    .padding(.horizontal, 32)
-                    .padding(.top, 24)
-                    .padding(.bottom, 32)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            PageTopBar(
+                sizeClass: sizeClass,
+                title: "播放列表",
+                subtitle: playlistStore.allPlaylists.isEmpty ? nil : "\(playlistStore.allPlaylists.count) 个",
+                searchText: $searchQuery,
+                searchFocusRequest: searchFocusRequest,
+                onSearchSubmit: onSearchSubmit
+            ) {
+                HStack(spacing: Theme.Spacing.md) {
+                    ViewModeToggle(mode: $viewMode)
+
+                    Button {
+                        newPlaylistName = ""
+                        showCreatePlaylist = true
+                    } label: {
+                        Label("新建", systemImage: "plus")
+                    }
+                    .buttonStyle(SecondaryButtonStyle(compact: true))
+                    .help("新建播放列表")
+
+                    Button {
+                        newSmartName = ""
+                        newSmartKeyword = ""
+                        showCreateSmart = true
+                    } label: {
+                        Label("智能", systemImage: "sparkles")
+                    }
+                    .buttonStyle(SecondaryButtonStyle(compact: true))
+                    .help("新建智能播放列表")
+                }
             }
+
+            ScrollView {
+                PageContent(sizeClass: sizeClass) {
+                    PlaylistGrid(
+                        sizeClass: sizeClass,
+                        onOpenPlaylist: onOpenPlaylist,
+                        viewMode: viewMode
+                    )
+                }
+            }
+            .scrollIndicators(.hidden)
+            .background(ScrollBarHider())
         }
-        .background(Theme.background.ignoresSafeArea())
+        .background(Theme.canvas.ignoresSafeArea())
         .task { await store.loadIfNeeded() }
         .alert("新建播放列表", isPresented: $showCreatePlaylist) {
             TextField("播放列表名称", text: $newPlaylistName)
             Button("创建") {
-                playlistStore.create(name: newPlaylistName)
+                let created = playlistStore.create(name: newPlaylistName)
                 newPlaylistName = ""
+                onOpenPlaylist(created)
             }
             Button("取消", role: .cancel) {}
         }
         .alert("新建智能播放列表", isPresented: $showCreateSmart) {
             TextField("播放列表名称", text: $newSmartName)
-            TextField("艺术家关键字（如：初音ミク）", text: $newSmartKeyword)
+            TextField("艺术家关键字（如：坂本龍一）", text: $newSmartKeyword)
             Button("创建") {
-                playlistStore.createSmart(name: newSmartName, artistKeyword: newSmartKeyword)
+                let created = playlistStore.createSmart(name: newSmartName, artistKeyword: newSmartKeyword)
                 newSmartName = ""
                 newSmartKeyword = ""
+                onOpenPlaylist(created)
             }
             Button("取消", role: .cancel) {}
         }
     }
-
-    private var header: some View {
-        HStack(spacing: 12) {
-            Text("播放列表")
-                .font(.system(size: 24, weight: .bold))
-                .foregroundStyle(Theme.primaryText)
-            if !playlistStore.allPlaylists.isEmpty {
-                Text("\(playlistStore.allPlaylists.count) 个")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.secondaryText)
-            }
-            Spacer()
-            Button {
-                newPlaylistName = ""
-                showCreatePlaylist = true
-            } label: {
-                Label("新建", systemImage: "plus")
-            }
-            .buttonStyle(SecondaryButtonStyle())
-            Button {
-                newSmartName = ""
-                newSmartKeyword = ""
-                showCreateSmart = true
-            } label: {
-                Label("智能", systemImage: "sparkles")
-            }
-            .buttonStyle(SecondaryButtonStyle())
-        }
-        .padding(.horizontal, 32)
-        .padding(.vertical, 16)
-        .background(WindowDragArea().background(Theme.background))
-    }
 }
 
-/// 播放列表网格（资料库「播放列表」分段与播放列表页共用）
+/// 播放列表网格 / 列表（资料库「播放列表」分段与本页共用）
 struct PlaylistGrid: View {
+    let sizeClass: LayoutSizeClass
     let onOpenPlaylist: (Playlist) -> Void
+    var viewMode: LibraryViewMode = .grid
 
     @ObservedObject private var playlistStore = PlaylistStore.shared
+    @State private var appeared = false
+
+    private var metrics: TrackRowMetrics { TrackRowMetrics(sizeClass: sizeClass) }
 
     var body: some View {
         Group {
             if playlistStore.allPlaylists.isEmpty {
-                VStack(spacing: 10) {
-                    Image(systemName: "music.note.list")
-                        .font(.system(size: 36))
-                        .foregroundStyle(Theme.tertiaryText)
-                    Text("还没有播放列表，点击右上角「新建」创建")
-                        .font(.system(size: 14))
-                        .foregroundStyle(Theme.secondaryText)
-                }
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.top, 60)
-            } else {
+                EmptyState(
+                    systemImage: "music.note.list",
+                    title: "还没有播放列表",
+                    message: "用顶栏的「新建」创建一个，或让「智能」按艺人关键字自动收集"
+                )
+            } else if viewMode == .grid {
                 LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 150, maximum: 220), spacing: 24)],
+                    columns: [GridItem(.adaptive(minimum: sizeClass.gridMin, maximum: sizeClass.gridMax),
+                                       spacing: sizeClass.gridSpacing.h)],
                     alignment: .leading,
-                    spacing: 28
+                    spacing: sizeClass.gridSpacing.v
                 ) {
-                    ForEach(playlistStore.allPlaylists) { playlist in
-                        PlaylistCard(playlist: playlist, onTap: { onOpenPlaylist(playlist) })
+                    ForEach(Array(playlistStore.allPlaylists.enumerated()), id: \.element.id) { index, playlist in
+                        PlaylistCard(playlist: playlist, width: 320) { onOpenPlaylist(playlist) }
+                            .staggerAppear(index: index, visible: appeared)
                     }
                 }
-            }
-        }
-    }
-}
-
-/// 播放列表卡片：前 4 首封面拼图（不足回退渐变图标）+ 名称 + 曲目数
-struct PlaylistCard: View {
-    let playlist: Playlist
-    let onTap: () -> Void
-
-    @ObservedObject private var store = MusicDataStore.shared
-    @State private var hovered = false
-
-    /// 取前 4 首有封面的曲目做 2x2 拼图
-    private var coverTracks: [BaseItemDto] {
-        let ids = playlist.isSmart ? [] : playlist.trackIds
-        let tracks = ids.compactMap { store.track(id: $0) }
-        if tracks.isEmpty { return [] }
-        return Array(tracks.prefix(4))
-    }
-
-    var body: some View {
-        Button(action: onTap) {
-            VStack(alignment: .leading, spacing: 10) {
-                cover
-                    .aspectRatio(1, contentMode: .fit)
-                    .frame(maxWidth: .infinity)
-                    .clipShape(RoundedRectangle(cornerRadius: Theme.radiusMd))
-                    .shadow(color: Theme.cardShadow, radius: 4, y: 2)
-                    .overlay {
-                        if hovered {
-                            ZStack {
-                                RoundedRectangle(cornerRadius: Theme.radiusMd)
-                                    .fill(Color.black.opacity(0.32))
-                                Image(systemName: "play.fill")
-                                    .font(.system(size: 22, weight: .semibold))
-                                    .foregroundStyle(.white)
-                            }
-                            .transition(.opacity)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(playlistStore.allPlaylists.enumerated()), id: \.element.id) { index, playlist in
+                        LibraryListRow(
+                            title: playlist.name,
+                            subtitle: playlist.isSmart ? "智能播放列表" : "\(playlist.trackIds.count) 首曲目",
+                            artworkURL: nil,
+                            isCurrent: false,
+                            isPlaying: false,
+                            metrics: metrics,
+                            onTap: { onOpenPlaylist(playlist) }
+                        )
+                        if index < playlistStore.allPlaylists.count - 1 {
+                            RowDivider()
                         }
                     }
-
-                Text(playlist.name)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Theme.primaryText)
-                    .lineLimit(1)
-                Text(subtitle)
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.secondaryText)
-                    .lineLimit(1)
-            }
-            .frame(maxWidth: .infinity)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .offset(y: hovered ? -2 : 0)
-        .shadow(color: Theme.hoverShadow, radius: hovered ? 10 : 0, y: hovered ? 6 : 0)
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: hovered)
-        .onHover { hovered = $0 }
-    }
-
-    private var subtitle: String {
-        if playlist.isSmart {
-            return "智能播放列表"
-        }
-        let count = playlist.trackIds.count
-        return count > 0 ? "\(count) 首曲目" : "空播放列表"
-    }
-
-    @ViewBuilder
-    private var cover: some View {
-        if coverTracks.count >= 2 {
-            GeometryReader { geo in
-                let gap: CGFloat = 2
-                let size = (geo.size.width - gap) / 2
-                VStack(spacing: gap) {
-                    HStack(spacing: gap) {
-                        coverThumb(coverTracks[safe: 0], size: size)
-                        coverThumb(coverTracks[safe: 1], size: size)
-                    }
-                    HStack(spacing: gap) {
-                        coverThumb(coverTracks[safe: 2], size: size)
-                        coverThumb(coverTracks[safe: 3], size: size)
-                    }
                 }
-            }
-        } else {
-            ZStack {
-                LinearGradient(
-                    colors: [Color(hex: 0xF9FAFB), Color(hex: 0xF3F4F6)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                Image(systemName: playlist.isSmart ? "sparkles" : "music.note.list")
-                    .font(.system(size: 30, weight: .semibold))
-                    .foregroundStyle(Theme.accentText.opacity(0.5))
+                .libraryTableChrome()
             }
         }
-    }
-
-    private func coverThumb(_ track: BaseItemDto?, size: CGFloat) -> some View {
-        Group {
-            if let track {
-                RemoteImage(url: track.artworkURL(width: 200), contentMode: .fill)
-                    .frame(width: size, height: size)
-                    .clipped()
-            } else {
-                Rectangle()
-                    .fill(Theme.surface2)
-                    .frame(width: size, height: size)
-            }
-        }
-    }
-}
-
-extension Array {
-    subscript(safe index: Int) -> Element? {
-        indices.contains(index) ? self[index] : nil
+        .onAppear { appeared = true }
     }
 }
