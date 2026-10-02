@@ -94,7 +94,29 @@ final class MusicDataStore: ObservableObject {
         await load()
     }
 
+    /// 等库 ID 就绪后加载。
+    ///
+    /// 启动页直接落在「资料库」时，视图的 `.task` 可能早于 `MainView.bootstrap` 的
+    /// 媒体库解析跑完 —— 那时 `libraryId` 还是 nil，`load()` 会直接返回，页面就永远空着。
+    func ensureLoaded() async {
+        if libraryId == nil { await resolveLibraryId() }
+        await loadIfNeeded()
+    }
+
+    /// 从 `AppState` 已加载的媒体库列表里解析音乐库 ID（启动早期解析失败时补一次）
+    private func resolveLibraryId() async {
+        if AppState.shared.libraries.isEmpty {
+            await AppState.shared.loadLibraries()
+        }
+        if let lib = AppState.shared.libraries.first(where: { $0.collectionType == "music" })
+            ?? AppState.shared.libraries.first {
+            libraryId = lib.id
+        }
+    }
+
     func reload() async {
+        // 库 ID 还没解析出来（服务器刚恢复 / 启动早期请求失败）时先补解析，否则刷新永远拿不到数据
+        if libraryId == nil { await resolveLibraryId() }
         tracks = []
         artists = []
         albums = []

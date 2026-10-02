@@ -148,12 +148,15 @@ struct PageTopBar<Trailing: View>: View {
 
             trailing()
         }
+        // 内边距与页面内容边距同源（pageMargin 16/20/24/28/32 随断点），
+        // 顶栏标题 / 搜索框与下方页面内容始终左对齐；不再用写死的 16/20
         .padding(.horizontal, sizeClass.pageMargin)
         .frame(height: Theme.Size.topBarHeight)
-        .background(WindowDragArea().background(Theme.surface))
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(Theme.borderSubtle).frame(height: 1)
-        }
+        // 顶栏属于 chrome 层：悬浮玻璃面板（§7.2 规则 2）
+        .background(WindowDragArea())
+        .glassPanel(.regular, cornerRadius: Theme.Size.panelRadius, elevation: .e2)
+        .padding(.top, Theme.Size.panelMargin)
+        .padding(.horizontal, Theme.Size.panelGap)
     }
 }
 
@@ -206,10 +209,11 @@ struct BreadcrumbBar: View {
         }
         .padding(.horizontal, sizeClass.pageMargin)
         .frame(height: Theme.Size.crumbBarHeight)
-        .background(WindowDragArea().background(Theme.surface))
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(Theme.borderSubtle).frame(height: 1)
-        }
+        .background(WindowDragArea())
+        .glassPanel(.thin, cornerRadius: Theme.Size.panelRadius, elevation: nil)
+        // 与 PageTopBar 同一悬浮节奏：顶部留 panelMargin，不再贴住窗口上缘
+        .padding(.top, Theme.Size.panelMargin)
+        .padding(.horizontal, Theme.Size.panelGap)
     }
 }
 
@@ -586,7 +590,7 @@ struct MusicRow: View {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(track.name ?? "")
                             .textStyle(.bodySM, weight: isCurrent ? .semibold : .medium,
-                                       color: isCurrent ? Theme.brand500 : Theme.textPrimary)
+                                       color: isCurrent ? Theme.brandText : Theme.textPrimary)
                             .lineLimit(1)
                         if !subtitle.isEmpty {
                             Text(subtitle)
@@ -654,14 +658,14 @@ struct MusicRow: View {
             if isCurrent {
                 EqualizerBars(
                     active: isPlaying,
-                    color: Theme.brand500,
+                    color: Theme.brandText,
                     barWidth: 2.5,
                     height: 12
                 )
             } else if hovered || rowFocused {
                 Image(systemName: "play.fill")
                     .font(.system(size: 11))
-                    .foregroundStyle(Theme.brand500)
+                    .foregroundStyle(Theme.brandText)
             } else {
                 Text("\(index + 1)")
                     .textStyle(.mono, color: Theme.textTertiary)
@@ -721,59 +725,23 @@ struct MusicRow: View {
     }
 }
 
-// MARK: - 详情页曲目表（高 44；表头吸顶；序号 hover → 播放；当前曲指示条）
+// MARK: - 详情页曲目表（行高 44；表头吸顶；序号 hover → 播放；当前曲指示条）
 
-struct TrackTable: View {
-    let tracks: [BaseItemDto]
+/// 曲目表表头（§2.3「表头吸顶」）。
+///
+/// 放在 `LazyVStack(pinnedViews: [.sectionHeaders])` 的 `Section` header 位上即可吸顶；
+/// 吸顶表头按 §7.2 规则 4 用 `glass.thick`（滚动内容从下面穿过时必须不透明）。
+struct TrackTableHeader: View {
     let sizeClass: LayoutSizeClass
-    /// 是否显示副标题（艺术家）
-    var showArtist = false
-    var showHeader = true
-    var onTap: (Int) -> Void
-
-    @ObservedObject private var music = MusicPlayerModel.shared
+    var showsArtist = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            if showHeader { headerRow }
-            LazyVStack(spacing: 0) {
-                ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
-                    TrackTableRow(
-                        track: track,
-                        index: index,
-                        sizeClass: sizeClass,
-                        isCurrent: music.currentTrack?.id == track.id,
-                        isPlaying: music.isPlaying && music.currentTrack?.id == track.id,
-                        showArtist: showArtist,
-                        onTap: { onTap(index) }
-                    )
-                    if index < tracks.count - 1 {
-                        Rectangle()
-                            .fill(Theme.borderSubtle)
-                            .frame(height: 1)
-                            .padding(.leading, 56)
-                    }
-                }
-            }
-        }
-        .background(
-            RoundedRectangle(cornerRadius: Theme.Radius.lg)
-                .fill(Theme.surface)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: Theme.Radius.lg)
-                .strokeBorder(Theme.borderSubtle)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.lg))
-    }
-
-    private var headerRow: some View {
         HStack(spacing: 0) {
             Text("#")
                 .frame(width: 56, alignment: .leading)
             Text("标题")
                 .frame(maxWidth: .infinity, alignment: .leading)
-            if showArtist {
+            if showsArtist {
                 Text("艺人")
                     .frame(width: 180, alignment: .leading)
             }
@@ -783,12 +751,56 @@ struct TrackTable: View {
         }
         .textStyle(.caption, weight: .semibold, color: Theme.textTertiary)
         .padding(.horizontal, 16)
-        .frame(height: 40)
-        .background(Theme.surfaceSunken)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(Theme.borderSubtle).frame(height: 1)
-        }
+        .frame(height: 36)
+        .glassPanel(.thick, cornerRadius: 0, elevation: nil)
         .accessibilityHidden(true)
+    }
+}
+
+/// 曲目行集合（不含表头，供详情页拼进吸顶 Section）
+struct TrackTableRows: View {
+    let tracks: [BaseItemDto]
+    let sizeClass: LayoutSizeClass
+    var showsArtist = false
+    let onTap: (Int) -> Void
+
+    @ObservedObject private var music = MusicPlayerModel.shared
+
+    var body: some View {
+        ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
+            TrackTableRow(
+                track: track,
+                index: index,
+                sizeClass: sizeClass,
+                isCurrent: music.currentTrack?.id == track.id,
+                isPlaying: music.isPlaying && music.currentTrack?.id == track.id,
+                showArtist: showsArtist,
+                onTap: { onTap(index) }
+            )
+            if index < tracks.count - 1 {
+                Rectangle()
+                    .fill(Theme.borderSubtle)
+                    .frame(height: 1)
+                    .padding(.leading, 56)
+            }
+        }
+    }
+}
+
+/// 表头 + 曲目行（非吸顶场景的便捷组合）
+struct TrackTable: View {
+    let tracks: [BaseItemDto]
+    let sizeClass: LayoutSizeClass
+    /// 是否显示副标题（艺术家）
+    var showArtist = false
+    var showHeader = true
+    var onTap: (Int) -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if showHeader { TrackTableHeader(sizeClass: sizeClass, showsArtist: showArtist) }
+            TrackTableRows(tracks: tracks, sizeClass: sizeClass, showsArtist: showArtist, onTap: onTap)
+        }
     }
 }
 
@@ -814,7 +826,7 @@ private struct TrackTableRow: View {
                         } else if hovered || rowFocused {
                             Image(systemName: "play.fill")
                                 .font(.system(size: 11))
-                                .foregroundStyle(Theme.brand500)
+                                .foregroundStyle(Theme.brandText)
                         } else {
                             Text("\(index + 1)")
                                 .textStyle(.mono, color: Theme.textTertiary)
@@ -825,7 +837,7 @@ private struct TrackTableRow: View {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(track.name ?? "")
                             .textStyle(.bodySM, weight: isCurrent ? .semibold : .regular,
-                                       color: isCurrent ? Theme.brand500 : Theme.textPrimary)
+                                       color: isCurrent ? Theme.brandText : Theme.textPrimary)
                             .lineLimit(1)
                         if showArtist, let artist = track.albumArtist ?? track.album, !artist.isEmpty {
                             Text(artist)
@@ -908,12 +920,23 @@ struct PlaylistCard: View {
 
     @ObservedObject private var store = MusicDataStore.shared
     @State private var hovered = false
+    /// 智能列表封面缓存：曲目数据变化时重算，避免每次渲染都全量过滤匹配
+    @State private var smartCoverTracks: [BaseItemDto] = []
     @Environment(\.appReduceMotion) private var reduceMotion
     @FocusState private var focused: Bool
 
     private var coverTracks: [BaseItemDto] {
-        guard !playlist.isSmart else { return [] }
+        if playlist.isSmart { return smartCoverTracks }
         return Array(playlist.trackIds.compactMap { store.track(id: $0) }.prefix(4))
+    }
+
+    /// 智能列表与手动列表一致：取匹配结果前 4 首的封面拼图
+    private func recomputeSmartCover() {
+        guard playlist.isSmart, let keyword = playlist.smartRule?.artistKeyword else {
+            smartCoverTracks = []
+            return
+        }
+        smartCoverTracks = Array(store.smartTracks(keyword: keyword).prefix(4))
     }
 
     var body: some View {
@@ -923,7 +946,7 @@ struct PlaylistCard: View {
                     .aspectRatio(1, contentMode: .fit)
                     .frame(maxWidth: .infinity)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
-                    .elevation(hovered ? .e2 : .e1)
+                    .elevation(hovered ? .e2 : .e1, cornerRadius: Theme.Radius.md)
                     .overlay {
                         if hovered || focused {
                             ZStack {
@@ -956,6 +979,8 @@ struct PlaylistCard: View {
         .offset(y: Theme.lift(hovered, reduceMotion: reduceMotion))
         .animation(Theme.Motion.spring, value: hovered)
         .onHover { hovered = $0 }
+        .task { recomputeSmartCover() }
+        .onChange(of: store.tracks) { _ in recomputeSmartCover() }
         .help(playlist.name)
     }
 
@@ -987,7 +1012,7 @@ struct PlaylistCard: View {
                 Theme.surfaceSunken
                 Image(systemName: playlist.isSmart ? "sparkles" : "music.note.list")
                     .font(.system(size: 30, weight: .semibold))
-                    .foregroundStyle(Theme.brand500.opacity(0.5))
+                    .foregroundStyle(Theme.brandText.opacity(0.5))
             }
         }
     }
@@ -1045,7 +1070,7 @@ struct PlaylistCoverMosaic: View {
                 .frame(width: size, height: size)
             }
         }
-        .elevation(.e2)
+        .elevation(.e2, cornerRadius: cornerRadius)
     }
 
     private func thumb(_ track: BaseItemDto?, size: CGFloat) -> some View {

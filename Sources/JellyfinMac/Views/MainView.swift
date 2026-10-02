@@ -85,55 +85,81 @@ struct MainView: View {
         GeometryReader { geo in
             let sizeClass = LayoutSizeClass.from(windowWidth: geo.size.width)
             let rail = usesIconRail(sizeClass)
-            HStack(spacing: 0) {
-                sidebar(sizeClass: sizeClass)
+            // 侧栏块 = 悬浮面板外边距 + 面板本体；内容列 = 窗口宽 − 侧栏块。
+            //
+            // 这里显式给内容列宽度是**硬约束**：HStack 在子视图最小宽度超过可用宽度时
+            // 会把整列按最小宽度铺开并溢出到窗口右侧（顶栏搜索框、播放条右半、页面右边缘
+            // 全部被裁掉）。给定宽度后，任何超宽子视图只会在列内溢出，不会顶破窗口。
+            let sidebarBlock = (rail ? Theme.Size.railWidth : sidebarWidth) + Theme.Size.panelMargin
+            let contentWidth = max(geo.size.width - sidebarBlock, 0)
+            ZStack {
+                // 氛围层（§7.2 规则 3）：玻璃之下必须有可透的内容
+                AmbientWash()
 
-                VStack(spacing: 0) {
-                    // 窗口标题栏条：红黄绿三键浮在这里，底色与侧栏/顶栏同为 surface
-                    Theme.surface
-                        .frame(height: Theme.Size.windowChromeHeight)
-                        .overlay(WindowDragArea())
+                HStack(spacing: 0) {
+                    sidebar(sizeClass: sizeClass)
 
-                    content(sizeClass: sizeClass)
-                        // 队列抽屉只覆盖内容区，不遮挡底部播放条
-                        .overlay(alignment: .trailing) {
-                            if showQueue {
-                                QueuePanelView(onClose: { showQueue = false })
-                                    .frame(width: Theme.Size.queuePanelWidth)
-                                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                    VStack(spacing: 0) {
+                        content(sizeClass: sizeClass)
+                            // 队列抽屉只覆盖内容区，不遮挡底部播放条
+                            .overlay(alignment: .trailing) {
+                                if showQueue {
+                                    QueuePanelView(onClose: { showQueue = false })
+                                        .frame(width: Theme.Size.queuePanelWidth)
+                                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                                }
                             }
-                        }
-                        .animation(Theme.Motion.spring, value: showQueue)
+                            .animation(Theme.Motion.spring, value: showQueue)
 
-                    miniPlayer(sizeClass: sizeClass)
+                        miniPlayer(sizeClass: sizeClass)
+                    }
+                    // 硬约束宽度见下方 sidebarBlock 注释；alignment 用 leading：
+                    // 内容列左缘始终钉在侧栏一侧，即便出现瞬态超宽也只会向右溢出，
+                    // 不会以居中方式同时向左压到侧栏上。
+                    .frame(width: contentWidth > 0 ? contentWidth : nil, alignment: .leading)
                 }
-            }
-            .overlay(alignment: .leading) {
-                // 拖拽分隔条**不占布局宽度**：12pt 热区跨在侧栏边界上。
-                // 若作为 HStack 的一项，它会在白色侧栏与白色顶栏之间露出一条 canvas 底色的
-                // 竖带（窗口全高），看起来像一道莫名的空隙。
-                if !rail {
-                    SidebarDivider(sidebarWidth: $sidebarWidth)
-                        .offset(x: sidebarWidth - 6)
+                .overlay(alignment: .leading) {
+                    // 拖拽分隔条**不占布局宽度**：12pt 热区跨在侧栏边界上。
+                    // 若作为 HStack 的一项，它会在两块面板之间露出一条竖带。
+                    if !rail {
+                        SidebarDivider(sidebarWidth: $sidebarWidth)
+                            .offset(x: sidebarWidth + Theme.Size.panelMargin - 6)
+                    }
                 }
-            }
-            .overlay(alignment: .leading) {
-                if drawerOpen && sizeClass.railOffersDrawer {
-                    drawer(sizeClass: sizeClass)
-                        .transition(.move(edge: .leading).combined(with: .opacity))
+                .overlay(alignment: .leading) {
+                    if drawerOpen && sizeClass.railOffersDrawer {
+                        drawer(sizeClass: sizeClass)
+                            .transition(.move(edge: .leading).combined(with: .opacity))
+                    }
                 }
-            }
-            .animation(Theme.Motion.base, value: sizeClass)
-            .animation(Theme.Motion.base, value: rail)
-            .animation(Theme.Motion.base, value: drawerOpen)
-            .onChange(of: sizeClass) { newValue in
-                // 档位切换时收起抽屉与手动收起状态，避免残留在新布局之上
-                if !newValue.railOffersDrawer { drawerOpen = false }
-                if newValue.usesIconRail { railOverride = false }
+                .animation(Theme.Motion.base, value: sizeClass)
+                .animation(Theme.Motion.base, value: rail)
+                .animation(Theme.Motion.base, value: drawerOpen)
+                .onChange(of: sizeClass) { newValue in
+                    // 档位切换时收起抽屉与手动收起状态，避免残留在新布局之上
+                    if !newValue.railOffersDrawer { drawerOpen = false }
+                    if newValue.usesIconRail { railOverride = false }
+                }
+                // 红黄绿三键要跟着侧栏形态走：图标栏面板只有 64pt 宽，
+                // 三键得收得更紧才不会露到面板外（见 WindowManager.moveTrafficLights）
+                .onAppear {
+                    WindowManager.sidebarUsesRail = rail
+                    WindowManager.refreshTrafficLights()
+                }
+                .onChange(of: rail) { newValue in
+                    WindowManager.sidebarUsesRail = newValue
+                    WindowManager.refreshTrafficLights()
+                }
             }
         }
         .background(Theme.canvas.ignoresSafeArea())
         .background(shortcutHandler)
+        // 把 SwiftUI 的 openSettings 环境动作捞进 SettingsOpener（macOS 14+）
+        .background {
+            if #available(macOS 14.0, *) {
+                OpenSettingsCatcher()
+            }
+        }
         .task { await bootstrap() }
     }
 
@@ -146,48 +172,65 @@ struct MainView: View {
 
     @ViewBuilder
     private func sidebar(sizeClass: LayoutSizeClass) -> some View {
-        if usesIconRail(sizeClass) {
-            // 可展开的条件：W1 的抽屉，或用户手动收起（点「展开」还原完整侧栏）
-            let canExpand = sizeClass.railOffersDrawer || railOverride
-            SidebarPanel(
-                mode: .rail(offersDrawer: canExpand),
-                selected: currentPage,
-                userName: appState.user?.name ?? "",
-                serverHost: APIClient.shared.baseURL?.host ?? "",
-                onSelect: handleSidebarSelect,
-                onCollapse: nil,
-                onExpand: {
-                    if railOverride {
-                        railOverride = false
-                    } else {
-                        drawerOpen = true
-                    }
-                },
-                onOpenSettings: openSettings,
-                onLogout: { appState.logout() }
-            )
-            .frame(width: Theme.Size.railWidth)
-        } else {
-            SidebarPanel(
-                mode: .full,
-                selected: currentPage,
-                userName: appState.user?.name ?? "",
-                serverHost: APIClient.shared.baseURL?.host ?? "",
-                onSelect: handleSidebarSelect,
-                onCollapse: { railOverride = true },
-                onExpand: nil,
-                onOpenSettings: openSettings,
-                onLogout: { appState.logout() }
-            )
-            .frame(width: sidebarWidth)
+        Group {
+            if usesIconRail(sizeClass) {
+                // 可展开的条件：W1 的抽屉，或用户手动收起（点「展开」还原完整侧栏）
+                let canExpand = sizeClass.railOffersDrawer || railOverride
+                SidebarPanel(
+                    mode: .rail(offersDrawer: canExpand),
+                    selected: currentPage,
+                    userName: appState.user?.name ?? "",
+                    serverHost: APIClient.shared.baseURL?.host ?? "",
+                    onSelect: handleSidebarSelect,
+                    onCollapse: nil,
+                    onExpand: {
+                        if railOverride {
+                            railOverride = false
+                        } else {
+                            drawerOpen = true
+                        }
+                    },
+                    onOpenSettings: openSettings,
+                    onLogout: { appState.logout() }
+                )
+                .frame(width: Theme.Size.railWidth)
+            } else {
+                SidebarPanel(
+                    mode: .full,
+                    selected: currentPage,
+                    userName: appState.user?.name ?? "",
+                    serverHost: APIClient.shared.baseURL?.host ?? "",
+                    onSelect: handleSidebarSelect,
+                    onCollapse: { railOverride = true },
+                    onExpand: nil,
+                    onOpenSettings: openSettings,
+                    onLogout: { appState.logout() }
+                )
+                .frame(width: sidebarWidth)
+            }
         }
+        // 悬浮玻璃面板（§7.2 规则 2）：外边距 10 + 统一圆角 10。
+        //
+        // 顺序要紧：padding 必须在 glassPanel **之外**，玻璃才会缩进 10pt 成为悬浮面板；
+        // 写在里面时玻璃会铺满含 padding 的整块（面板贴住窗口左/上/下边缘，观感与
+        // 「贴边侧栏」无异，红黄绿三键也失去面板依托）。
+        .glassPanel(.regular, cornerRadius: Theme.Size.panelRadius, elevation: .e2)
+        .padding(.leading, Theme.Size.panelMargin)
+        .padding(.vertical, Theme.Size.panelMargin)
+        // 注意：这里**不能**对 sidebarWidth 加动画。内容列宽度由同一状态即时重算
+        // （frame(width: contentWidth)），若侧栏面板对宽度变化再做 200ms 动画，
+        // 拖拽分隔条时「画出来的面板」会滞后于「布局槽位」，而内容列已经瞬间就位 ——
+        // 面板在动画期间直接压到内容列上（封面 / 序号 / 面包屑被盖住的根因，
+        // 2026-10-02 截图复现）。分隔条拖拽本身就该 1:1 跟手（见 SidebarDivider 注释）；
+        // 侧栏折叠 / 展开与断点切换的平滑过渡由 HStack 上的
+        // .animation(value: rail / sizeClass) 统一驱动，侧栏与内容列同帧协同变化。
     }
 
-    /// 图标栏临时展开的抽屉：240pt 覆盖内容区 + 遮罩，点击外部或 Esc 收起
+    /// 图标栏临时展开的抽屉：240pt 玻璃面板覆盖内容区 + 遮罩，点击外部或 Esc 收起
     private func drawer(sizeClass: LayoutSizeClass) -> some View {
         HStack(spacing: 0) {
             // 图标栏本身保持可点（不被遮罩吃掉）
-            Color.clear.frame(width: Theme.Size.railWidth)
+            Color.clear.frame(width: Theme.Size.railWidth + Theme.Size.panelMargin)
 
             ZStack(alignment: .leading) {
                 Theme.scrim
@@ -213,7 +256,9 @@ struct MainView: View {
                     onLogout: { appState.logout() }
                 )
                 .frame(width: Theme.Size.sidebarWidth)
-                .elevation(.e3)
+                .glassPanel(.thick, cornerRadius: Theme.Size.panelRadius, elevation: .e3)
+                .padding(.vertical, Theme.Size.panelMargin)
+                .padding(.leading, Theme.Spacing.xs)
             }
         }
         .ignoresSafeArea()
@@ -400,7 +445,6 @@ struct MainView: View {
     private func miniPlayer(sizeClass: LayoutSizeClass) -> some View {
         if music.currentTrack != nil && currentPage != .nowPlaying {
             MiniPlayerBar(
-                sizeClass: sizeClass,
                 onOpen: { selectPage(.nowPlaying) },
                 onToggleQueue: { showQueue.toggle() },
                 isQueueVisible: showQueue
@@ -465,11 +509,10 @@ struct MainView: View {
         searchFocusRequest += 1
     }
 
+    /// 打开设置窗口。实现见文件末尾的 `SettingsOpener`：
+    /// macOS 14+ 走 SwiftUI 的 openSettings 环境动作，macOS 13 回退到 AppKit 选择子。
     private func openSettings() {
-        // `Settings` 场景没有 openWindow 入口，走 AppKit 的标准动作
-        // （macOS 13+ 是 showSettingsWindow:，更早是 showPreferencesWindow:）
-        if NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) { return }
-        NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
+        SettingsOpener.shared.open()
     }
 
     // MARK: - 启动装载
@@ -477,10 +520,18 @@ struct MainView: View {
     private func bootstrap() async {
         // 等待会话就绪（自动登录进行中时 APIClient 尚未配置）
         for _ in 0..<100 {
-            if APIClient.shared.baseURL != nil { break }
+            if APIClient.shared.baseURL != nil, APIClient.shared.user != nil { break }
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
         await appState.loadLibraries()
+        // 冷启动时 /Views 偶发失败（服务器刚唤醒 / 本地域名解析未就绪）：
+        // 失败后不重试会让整个音乐模块永久空白，所以这里退避重试几次
+        var attempt = 0
+        while appState.libraries.isEmpty && attempt < 5 {
+            attempt += 1
+            try? await Task.sleep(nanoseconds: UInt64(attempt) * 600_000_000)
+            await appState.loadLibraries()
+        }
         if let lib = appState.libraries.first(where: { $0.collectionType == "music" })
             ?? appState.libraries.first {
             MusicDataStore.shared.libraryId = lib.id
@@ -540,12 +591,9 @@ private struct SidebarPanel: View {
         Group {
             if isRail { railLayout } else { fullLayout }
         }
-        // 顶部让出红黄绿三键的位置（侧栏白底仍铺满整高，只有内容下移）
+        // 顶部让出红黄绿三键的位置：悬浮面板外边距 10 后，三键正好落在面板内
         .padding(.top, Theme.Size.windowChromeHeight)
-        .background(WindowDragArea().background(Theme.surface))
-        .overlay(alignment: .trailing) {
-            Rectangle().fill(Theme.borderSubtle).frame(width: 1)
-        }
+        .background(WindowDragArea())
     }
 
     // MARK: 完整侧栏
@@ -603,7 +651,7 @@ private struct SidebarPanel: View {
         let visible = playlistGroupExpanded ? all : Array(all.prefix(6))
 
         HStack {
-            Text("播放列表")
+            Text("我的列表")
                 .sectionCaption()
             Spacer(minLength: 0)
             if all.count > 6 {
@@ -611,9 +659,10 @@ private struct SidebarPanel: View {
                     playlistGroupExpanded.toggle()
                 } label: {
                     Text(playlistGroupExpanded ? "收起" : "显示全部")
-                        .textStyle(.caption, weight: .medium, color: Theme.brand500)
+                        .textStyle(.caption, weight: .medium, color: Theme.brandText)
                 }
                 .buttonStyle(.plain)
+                .hitExpand(from: 16, to: 32)
                 .accessibilityLabel(playlistGroupExpanded ? "收起播放列表分组" : "显示全部播放列表")
             }
         }
@@ -627,6 +676,7 @@ private struct SidebarPanel: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, Theme.Spacing.sm)
         } else {
+            // 新建 / 智能列表入口在「播放列表」一级页的顶栏，这里不重复放「管理播放列表」
             ForEach(visible) { playlist in
                 navRow(
                     page: .playlist(playlist),
@@ -634,40 +684,18 @@ private struct SidebarPanel: View {
                     title: playlist.name
                 )
             }
-            Button {
-                onSelect(.playlists)
-            } label: {
-                HStack(spacing: Theme.Spacing.lg) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 13))
-                        .frame(width: 18)
-                    Text("管理播放列表")
-                        .textStyle(.bodySM, weight: .medium, color: Theme.textTertiary)
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 10)
-                .frame(height: 34)
-                .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("管理播放列表")
         }
     }
 
     // MARK: 图标栏
 
     private var railLayout: some View {
-        VStack(spacing: Theme.Spacing.sm) {
-            RoundedRectangle(cornerRadius: Theme.Radius.md)
-                .fill(Theme.brandGradient)
-                .frame(width: 34, height: 34)
-                .overlay(
-                    Image(systemName: "music.note")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.white)
-                )
-                .padding(.top, Theme.Spacing.lg)
-                .padding(.bottom, Theme.Spacing.sm)
+        VStack(spacing: Theme.Spacing.xs) {
+            // W1 抽屉入口（§3.2）：图标栏顶部汉堡按钮
+            if case .rail(let offersDrawer) = mode, offersDrawer, let onExpand {
+                railRow(icon: "line.3.horizontal", title: "展开导航", action: onExpand)
+                    .padding(.bottom, Theme.Spacing.sm)
+            }
 
             ForEach(Self.primaryItems, id: \.2) { item in
                 railRow(page: item.0, icon: item.1, title: item.2)
@@ -675,13 +703,10 @@ private struct SidebarPanel: View {
 
             Spacer(minLength: 0)
 
-            if case .rail(let offersDrawer) = mode, offersDrawer, let onExpand {
-                railRow(icon: "sidebar.left", title: "展开", action: onExpand)
-            }
-            railRow(icon: "gearshape", title: "设置", action: onOpenSettings)
-            railRow(icon: "rectangle.portrait.and.arrow.right", title: "退出", action: onLogout)
+            railRow(icon: "slider.horizontal.3", title: "设置", action: onOpenSettings)
+            railRow(icon: "rectangle.portrait.and.arrow.right", title: "退出登录", action: onLogout)
         }
-        .padding(.horizontal, Theme.Spacing.md)
+        .padding(.horizontal, Theme.Spacing.sm)
         .padding(.bottom, Theme.Spacing.lg)
     }
 
@@ -714,20 +739,22 @@ private struct SidebarPanel: View {
     // MARK: 账号菜单
 
     private var accountFooter: some View {
-        VStack(spacing: 0) {
-            Rectangle().fill(Theme.borderSubtle).frame(height: 1)
+        VStack(spacing: 2) {
+            // 设置（⌘,）：一级入口，不藏在账号菜单里
+            navRow(icon: "slider.horizontal.3", title: "设置", action: onOpenSettings)
+
             HStack(spacing: Theme.Spacing.md) {
                 Circle()
                     .fill(Theme.brandGradient)
-                    .frame(width: 30, height: 30)
+                    .frame(width: 26, height: 26)
                     .overlay(
                         Text(String(userName.prefix(1)).uppercased())
-                            .textStyle(.footnote, weight: .bold, color: .white)
+                            .textStyle(.caption, weight: .bold, color: .white)
                     )
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(userName)
-                        .textStyle(.footnote, weight: .semibold, color: Theme.textPrimary)
+                        .textStyle(.bodySM, weight: .semibold, color: Theme.textPrimary)
                         .lineLimit(1)
                     Text(serverHost)
                         .textStyle(.caption, color: Theme.textSecondary)
@@ -749,9 +776,9 @@ private struct SidebarPanel: View {
                         Label("退出登录", systemImage: "rectangle.portrait.and.arrow.right")
                     }
                 } label: {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 13))
-                        .foregroundStyle(Theme.textSecondary)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.textTertiary)
                         .frame(width: Theme.Size.iconButtonSm, height: Theme.Size.iconButtonSm)
                         .contentShape(Rectangle())
                 }
@@ -761,9 +788,15 @@ private struct SidebarPanel: View {
                 .help("账号与设置")
                 .accessibilityLabel("账号与设置")
             }
-            .padding(.horizontal, Theme.Spacing.lg)
-            .padding(.vertical, Theme.Spacing.md)
+            .padding(.horizontal, 8)
+            .frame(height: 40)
         }
+        .padding(.horizontal, Theme.Spacing.lg)
+        .padding(.bottom, Theme.Spacing.lg)
+    }
+
+    private func navRow(icon: String, title: String, action: @escaping () -> Void) -> some View {
+        SidebarNavRow(icon: icon, title: title, isSelected: false, style: .full, action: action)
     }
 }
 
@@ -807,46 +840,34 @@ private struct SidebarNavRow: View {
                     .font(.system(size: 13, weight: .medium))
                     .frame(width: 18)
                 Text(title)
-                    .textStyle(.bodySM, weight: .medium)
+                    .textStyle(.bodySM, weight: isSelected ? .semibold : .medium)
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 10)
             .frame(height: 36)
-            .foregroundStyle(isSelected ? Theme.textOnAccent : Theme.textPrimary)
+            // 选中 = brandTint 底 + brandText 文字 + 字重 600（§4.5 列表行状态机）
+            .foregroundStyle(isSelected ? Theme.brandText : Theme.textPrimary)
             .background(
-                RoundedRectangle(cornerRadius: Theme.Radius.md)
+                RoundedRectangle(cornerRadius: Theme.Radius.sm)
                     .fill(fill)
             )
-            .overlay(alignment: .leading) {
-                // 选中：左侧 3pt 主色指示条（位于侧栏内边距之外）
-                if isSelected {
-                    RoundedRectangle(cornerRadius: 1.5)
-                        .fill(Theme.brand500)
-                        .frame(width: 3, height: 20)
-                        .offset(x: -Theme.Spacing.lg)
-                }
-            }
 
         case .rail:
-            VStack(spacing: 3) {
-                Image(systemName: icon)
-                    .font(.system(size: 18, weight: .medium))
-                Text(title)
-                    .textStyle(.caption, weight: .medium)
-                    .lineLimit(1)
-            }
-            .frame(width: 48, height: 48)
-            .foregroundStyle(isSelected ? Theme.textOnAccent : Theme.textSecondary)
-            .background(
-                RoundedRectangle(cornerRadius: Theme.Radius.md)
-                    .fill(fill)
-            )
+            // 图标栏只显示图标（名称走 tooltip 与 VoiceOver）
+            Image(systemName: icon)
+                .font(.system(size: 20, weight: .medium))
+                .frame(width: 44, height: 44)
+                .foregroundStyle(isSelected ? Theme.brandText : Theme.textSecondary)
+                .background(
+                    RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                        .fill(fill)
+                )
         }
     }
 
     private var fill: AnyShapeStyle {
-        if isSelected { return AnyShapeStyle(Theme.brandGradient) }
+        if isSelected { return AnyShapeStyle(Theme.brandTint) }
         if hovered { return AnyShapeStyle(Theme.surfaceHover) }
         return AnyShapeStyle(Color.clear)
     }
@@ -856,31 +877,21 @@ private struct SidebarNavRow: View {
 
 /// 拖拽用 NSView 原生实现（同 WindowDragArea）：SwiftUI DragGesture 依赖识别器事件流，
 /// 会因悬停结构变化/窗口激活重投递而中断（宽度来回弹 = 抖动），原生 mouseDown/Dragged
-/// 则稳定且锚点式 1:1 跟随
+/// 则稳定且锚点式 1:1 跟随。
+///
+/// **不画任何可见分隔线**（悬停、拖动时都不画）：悬浮侧栏面板与内容区之间本来就有 12pt
+/// 间隙，再叠一条竖线只会显脏。可发现性全部交给鼠标指针 —— 进入 12pt 热区即变
+/// `resizeLeftRight`，按下即拖。
 struct SidebarDivider: View {
     @Binding var sidebarWidth: CGFloat
-    @State private var hovered = false
 
     private let range: ClosedRange<CGFloat> = Theme.Size.sidebarMin...Theme.Size.sidebarMax
 
     var body: some View {
-        // 稳定结构：蓝色高亮线始终存在，只切 opacity（结构分支会随 onHover 变化，
-        // 拖拽中介入手势节点重建，宽度来回弹 = 抖动）
         // 热区 12pt，跨在侧栏右边界上（由调用方 offset 定位），拖拽 NSView 叠在最上层
-        ZStack {
-            Rectangle()
-                .fill(Theme.brand500.opacity(0.6))
-                .frame(width: 2)
-                .opacity(hovered ? 1 : 0)
-            DividerDragView(
-                sidebarWidth: $sidebarWidth,
-                range: range,
-                onHoverChange: { hovered = $0 }
-            )
-        }
-        .frame(width: 12)
-        .frame(maxHeight: .infinity)
-        .animation(Theme.Motion.micro, value: hovered)
+        DividerDragView(sidebarWidth: $sidebarWidth, range: range)
+            .frame(width: 12)
+            .frame(maxHeight: .infinity)
     }
 }
 
@@ -889,7 +900,6 @@ struct SidebarDivider: View {
 private struct DividerDragView: NSViewRepresentable {
     @Binding var sidebarWidth: CGFloat
     let range: ClosedRange<CGFloat>
-    let onHoverChange: (Bool) -> Void
 
     func makeNSView(context: Context) -> DragNSView {
         let view = DragNSView()
@@ -900,7 +910,6 @@ private struct DividerDragView: NSViewRepresentable {
         view.finishWidth = { width in
             UserDefaults.standard.set(width, forKey: "sidebarWidth")
         }
-        view.hoverChanged = onHoverChange
         return view
     }
 
@@ -910,10 +919,13 @@ private struct DividerDragView: NSViewRepresentable {
         var readWidth: () -> CGFloat = { 0 }
         var writeWidth: (CGFloat) -> Void = { _ in }
         var finishWidth: (CGFloat) -> Void = { _ in }
-        var hoverChanged: (Bool) -> Void = { _ in }
 
         private var anchorWidth: CGFloat = 0
         private var anchorMouseX: CGFloat = 0
+
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            super.hitTest(point)
+        }
 
         override func mouseDown(with event: NSEvent) {
             anchorWidth = readWidth()
@@ -942,13 +954,50 @@ private struct DividerDragView: NSViewRepresentable {
         }
 
         override func mouseEntered(with event: NSEvent) {
-            hoverChanged(true)
             NSCursor.resizeLeftRight.set()
         }
 
         override func mouseExited(with event: NSEvent) {
-            hoverChanged(false)
             NSCursor.arrow.set()
         }
+    }
+}
+
+// MARK: - 设置窗口打开器
+
+/// 打开设置窗口的唯一入口。
+///
+/// 为什么需要这个桥：
+/// - `showSettingsWindow:` 选择子在新版 macOS 上会被 responder chain「接受」
+///   （`sendAction` 返回 true）却什么都不做，窗口根本不出现 —— 返回 true 极具误导性。
+///   2026-10-01 用最小 App 复现：选择子 true 且无窗口，`openSettings()` 正常开窗。
+/// - 正确的 `openSettings` 是 SwiftUI 的**环境动作**，只能在 View 环境里取，
+///   而侧栏菜单项等 AppKit 侧代码拿不到环境，于是用一个零尺寸视图把它捞进全局。
+@MainActor
+final class SettingsOpener {
+    static let shared = SettingsOpener()
+
+    /// macOS 14+ 由 `OpenSettingsCatcher` 注入；macOS 13 保持 nil 走选择子回退
+    var action: (() -> Void)?
+
+    func open() {
+        if let action {
+            action()
+            return
+        }
+        if NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) { return }
+        NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
+    }
+}
+
+@available(macOS 14.0, *)
+private struct OpenSettingsCatcher: View {
+    @Environment(\.openSettings) private var openSettings
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .onAppear { SettingsOpener.shared.action = { openSettings() } }
+            .accessibilityHidden(true)
     }
 }

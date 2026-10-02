@@ -41,10 +41,10 @@ struct MusicLibraryView: View {
             .scrollIndicators(.hidden)
             .background(ScrollBarHider())
         }
-        .background(Theme.canvas.ignoresSafeArea())
         .onAppear { appeared = true }
         .task {
-            await store.loadIfNeeded()
+            // 启动页直接落在资料库时，等库 ID 解析完再拉取，避免页面空着
+            await store.ensureLoaded()
             displayedTracks = store.sortedTracks(by: sortMode)
         }
         .task(id: sortMode) {
@@ -80,7 +80,7 @@ struct MusicLibraryView: View {
         }
     }
 
-    // MARK: - 第二行 56：分段 + 随机 / 播放全部
+    // MARK: - 第二行 56：分段 + 随机 / 播放全部（§2.2）
 
     private var segmentBar: some View {
         HStack(spacing: Theme.Spacing.lg) {
@@ -91,13 +91,13 @@ struct MusicLibraryView: View {
 
             Spacer(minLength: Theme.Spacing.md)
 
-            if segment == .tracks && !displayedTracks.isEmpty {
-                HStack(spacing: Theme.Spacing.sm) {
+            if !playAllSource.isEmpty {
+                HStack(spacing: Theme.Spacing.md) {
                     IconButton(
                         systemName: "shuffle",
                         label: "随机播放",
-                        size: Theme.Size.iconButtonSm,
-                        action: { MusicPlayerModel.shared.play(tracks: displayedTracks.shuffled(), startAt: 0) }
+                        size: Theme.Size.iconButtonMd,
+                        action: { MusicPlayerModel.shared.play(tracks: playAllSource.shuffled(), startAt: 0) }
                     )
                     playAllButton
                 }
@@ -105,26 +105,47 @@ struct MusicLibraryView: View {
         }
         .padding(.horizontal, sizeClass.pageMargin)
         .frame(height: 56)
-        .background(Theme.surface)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(Theme.borderSubtle).frame(height: 1)
+    }
+
+    /// 「播放全部 / 随机」的作用范围：歌曲页用当前排序结果，其余分段用整库曲目
+    private var playAllSource: [BaseItemDto] {
+        switch segment {
+        case .tracks: return displayedTracks
+        case .playlists: return []
+        default: return store.sortedTracks(by: sortMode)
         }
     }
 
     private var playAllButton: some View {
         Button {
-            MusicPlayerModel.shared.play(tracks: displayedTracks, startAt: 0)
+            playAll()
         } label: {
-            Image(systemName: "play.fill")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: Theme.Size.iconButtonSm, height: Theme.Size.iconButtonSm)
-                .background(Circle().fill(Theme.brandGradient))
-                .contentShape(Circle())
+            HStack(spacing: Theme.Spacing.sm) {
+                Image(systemName: "play.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("播放全部")
+                    .textStyle(.bodySM, weight: .medium)
+            }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PrimaryButtonStyle(compact: true))
+        .hitExpand(from: Theme.Size.buttonHeightSm, to: 44)
         .help("播放全部")
         .accessibilityLabel("播放全部")
+    }
+
+    /// §2.2 超限：「播放全部」>1000 首截断为 1000 + Toast 说明
+    private func playAll() {
+        let all = playAllSource
+        guard !all.isEmpty else { return }
+        let limit = 1000
+        let queue = all.count > limit ? Array(all.prefix(limit)) : all
+        MusicPlayerModel.shared.play(tracks: queue, startAt: 0)
+        if all.count > limit {
+            ToastCenter.shared.show(
+                "已播放前 \(limit) 首（共 \(all.count) 首）",
+                systemImage: "exclamationmark.circle"
+            )
+        }
     }
 
     // MARK: - 内容
@@ -286,7 +307,7 @@ struct LibraryListRow: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(title)
                         .textStyle(.bodySM, weight: isCurrent ? .semibold : .medium,
-                                   color: isCurrent ? Theme.brand500 : Theme.textPrimary)
+                                   color: isCurrent ? Theme.brandText : Theme.textPrimary)
                         .lineLimit(1)
                     if !subtitle.isEmpty {
                         Text(subtitle)

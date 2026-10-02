@@ -31,35 +31,40 @@ struct MusicAlbumView: View {
             )
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
+                // 表头吸顶（§2.3）：曲目表放进 pinned Section
+                LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                     header
                         .padding(.horizontal, sizeClass.pageMargin)
                         .padding(.top, sizeClass.isNarrow ? Theme.Spacing.xxl : Theme.Spacing.section)
                         .padding(.bottom, Theme.Spacing.xxl)
-                        .background(Theme.surface)
 
-                    Group {
-                        if vm.isLoading && vm.tracks.isEmpty {
-                            SkeletonList(count: 8)
-                        } else if vm.tracks.isEmpty {
-                            EmptyState(
-                                systemImage: "music.note.list",
-                                title: "这张专辑还没有曲目",
-                                message: "检查服务器上的专辑内容"
-                            )
-                        } else {
-                            TrackTable(
+                    if vm.isLoading && vm.tracks.isEmpty {
+                        SkeletonList(count: 8)
+                            .padding(.horizontal, sizeClass.pageMargin)
+                            .padding(.bottom, Theme.Spacing.section)
+                    } else if vm.tracks.isEmpty {
+                        EmptyState(
+                            systemImage: "music.note.list",
+                            title: "这张专辑还没有曲目",
+                            message: "检查服务器上的专辑内容"
+                        )
+                        .padding(.bottom, Theme.Spacing.section)
+                    } else {
+                        Section {
+                            TrackTableRows(
                                 tracks: vm.tracks,
                                 sizeClass: sizeClass,
                                 onTap: { index in
                                     MusicPlayerModel.shared.play(tracks: vm.tracks, startAt: index)
                                 }
                             )
+                            .padding(.horizontal, sizeClass.pageMargin)
+                            .padding(.bottom, Theme.Spacing.section)
+                        } header: {
+                            TrackTableHeader(sizeClass: sizeClass)
+                                .padding(.horizontal, sizeClass.pageMargin)
                         }
                     }
-                    .padding(.horizontal, sizeClass.pageMargin)
-                    .padding(.top, Theme.Spacing.xxl)
-                    .padding(.bottom, Theme.Spacing.section)
                 }
                 .frame(maxWidth: sizeClass.contentMaxWidth ?? .infinity, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -67,7 +72,6 @@ struct MusicAlbumView: View {
             .scrollIndicators(.hidden)
             .background(ScrollBarHider())
         }
-        .background(Theme.canvas.ignoresSafeArea())
         .task { await vm.load() }
     }
 
@@ -78,8 +82,9 @@ struct MusicAlbumView: View {
         let coverSize = sizeClass.detailCoverSize
         let cover = RemoteImage(url: current.artworkURL(width: 480), contentMode: .fill)
             .frame(width: coverSize, height: coverSize)
-            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.lg))
-            .elevation(.e2)
+            // 全部封面统一圆角 R=10（§7.2 规则 2）+ e2 阴影
+            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
+            .elevation(.e2, cornerRadius: Theme.Radius.md)
 
         if sizeClass.detailStacksVertically {
             VStack(alignment: .leading, spacing: Theme.Spacing.xxl) {
@@ -95,7 +100,7 @@ struct MusicAlbumView: View {
     }
 
     private var headerInfo: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
+        VStack(alignment: .leading, spacing: Theme.Spacing.md) {
             Eyebrow(text: "专辑")
 
             Text(current.name ?? "")
@@ -110,11 +115,8 @@ struct MusicAlbumView: View {
             }
 
             if let genres = current.genres, !genres.isEmpty {
-                HStack(spacing: Theme.Spacing.md) {
-                    ForEach(Array(genres.prefix(3).enumerated()), id: \.offset) { _, genre in
-                        Chip(text: genre)
-                    }
-                }
+                // 流派 chips ≤3 + 「+N」展开（§2.3 超限）
+                ChipRow(items: genres)
             }
 
             actionRow
@@ -129,7 +131,7 @@ struct MusicAlbumView: View {
                 playAll()
             } label: {
                 Label("播放", systemImage: "play.fill")
-                    .frame(minWidth: 76)
+                    .frame(minWidth: 88)
             }
             .buttonStyle(PrimaryButtonStyle())
             .disabled(vm.tracks.isEmpty)
@@ -178,8 +180,7 @@ struct MusicAlbumView: View {
                 .font(.system(size: 16, weight: .medium))
                 .foregroundStyle(Theme.textSecondary)
                 .frame(width: Theme.Size.iconButtonLg, height: Theme.Size.iconButtonLg)
-                .background(Circle().fill(Theme.surface))
-                .overlay(Circle().strokeBorder(Theme.borderDefault))
+                .glassControl(cornerRadius: Theme.Size.iconButtonLg / 2)
                 .contentShape(Circle())
         }
     }

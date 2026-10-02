@@ -26,6 +26,9 @@ struct JellyfinApp: App {
             SettingsView()
                 .environmentObject(appState)
                 .environmentObject(settings)
+                // 设置窗口没有氛围层，玻璃在那里只会得到白底上的半透明白（§7.2 规则 3）
+                .environment(\.appGlassSurfaces, false)
+                .environment(\.appReduceTransparency, AccessibilityDisplayObserver.shared.reduceTransparency)
         }
     }
 }
@@ -34,8 +37,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
-        // 浅色主题：跟随系统浅色外观（深色主题为后续版本，令牌层已预留分支）
-        NSApp.appearance = NSAppearance(named: .aqua)
+        // 主题外观：浅色 / 深色 / 跟随系统，令牌层按外观在绘制时解析（§4.2 双主题同权）
+        Theme.applyStoredTheme()
 
         // 会话恢复由这里驱动（不绑定视图生命周期，避免被取消）
         Task { @MainActor in
@@ -58,24 +61,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             WindowManager.apply(window)
         }
 
-        // 未激活窗口的首次点击："单击直接生效"（等效于所有控件 acceptsFirstMouse = true）。
-        // 系统默认会把窗口未激活时的第一次点击只用于激活窗口、不投递给控件，需点第二次才生效。
-        // 不能依赖 SwiftUI 视图上覆盖 acceptsFirstMouse —— hosting view 会拦截控件区域的
-        // hit-test，作为按钮背景的代表视图永远不会被询问到。这里先激活窗口，再把点击
-        // 直接投递给命中视图；激活完成后再投递，避免 didBecomeKey 期间的窗口改写打断点击。
+        // 未激活窗口的首次点击："单击直接生效"（等效于 acceptsFirstMouse = true）。
+        //
+        // ⚠️ 不能自己合成 mouseDown 投给 hitTest 命中的视图：SwiftUI 的控件（Menu / Button /
+        // 自定义分段控件与色块）走的是 hosting view 的手势通路，命中视图收到 mouseDown 也
+        // 不会触发控件 —— 点击被白白吞掉，表现为「窗口看得见，但里面点不动任何东西」
+        // （设置窗口里的下拉框点不开、主题/强调色点不动，2026-10-01 定位）。
+        // 正确做法：激活窗口后把这次点击重新入队，交给正常事件通路（含 SwiftUI 手势）处理。
+        //
+        // 另外，同一应用内的非 key 窗口不需要干预：AppKit 自己会把首次点击同时用于
+        // 激活窗口和投递给控件（实测无监视器时首点即生效），拦下来反而更糟。
+        var repostedEvents = Set<Int>()
         NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
             guard let window = event.window,
                   !window.isKeyWindow,
                   window.level == .normal else { return event }
+            guard !NSApp.isActive else { return event }
+            // 激活失败时不重复入队，避免事件在监视器里打转
+            guard !repostedEvents.contains(event.eventNumber) else { return event }
             if #available(macOS 14.0, *) {
                 NSApp.activate()
             } else {
                 NSApp.activate(ignoringOtherApps: true)
             }
             window.makeKeyAndOrderFront(nil)
-            if let hit = window.contentView?.hitTest(event.locationInWindow) {
-                hit.mouseDown(with: event)
-            }
+            repostedEvents.insert(event.eventNumber)
+            if repostedEvents.count > 64 { repostedEvents.removeAll() }
+            NSApp.postEvent(event, atStart: false)
             return nil
         }
 
@@ -102,6 +114,8 @@ struct RootView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @ObservedObject private var settings = AppSettings.shared
+    /// 系统「降低透明度」：玻璃材质回落实底（§7.3）
+    @ObservedObject private var display = AccessibilityDisplayObserver.shared
 
     var body: some View {
         Group {
@@ -117,6 +131,10 @@ struct RootView: View {
         .background(Theme.canvas)
         // 系统「减少动态效果」或应用内设置任一开启即生效（§7）
         .environment(\.appReduceMotion, systemReduceMotion || settings.reduceMotion)
+        // 系统「降低透明度」→ 全部玻璃换回 surface 实底（§7.3）
+        .environment(\.appReduceTransparency, display.reduceTransparency)
         .toastHost()
+        // 二次确认弹窗（破坏性操作）：请求记录发起窗口，只在该窗口渲染
+        .dialogHost()
     }
 }

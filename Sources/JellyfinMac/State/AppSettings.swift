@@ -45,6 +45,20 @@ final class AppSettings: ObservableObject {
         case system = "跟随系统"
 
         var id: String { rawValue }
+
+        /// 对应的 AppKit 外观；`nil` = 跟随系统
+        var appearance: NSAppearance? {
+            switch self {
+            case .light: return NSAppearance(named: .aqua)
+            case .dark: return NSAppearance(named: .darkAqua)
+            case .system: return nil
+            }
+        }
+
+        /// 从持久化字符串还原（启动早期在非隔离上下文使用）
+        init(storedRawValue: String) {
+            self = ThemeChoice(rawValue: storedRawValue) ?? .light
+        }
     }
 
     enum AccentChoice: String, CaseIterable, Identifiable {
@@ -55,10 +69,11 @@ final class AppSettings: ObservableObject {
         var id: String { rawValue }
 
         var color: Color {
+            // 色块用固定值：否则选中泛音青后，靛蓝色块会跟着变成青色
             switch self {
-            case .indigo: return Theme.brand500
-            case .teal: return Theme.overtoneTeal
-            case .purple: return Theme.brandPurple
+            case .indigo: return Theme.accentIndigo
+            case .teal: return Theme.accentTeal
+            case .purple: return Theme.accentPurple
             }
         }
     }
@@ -97,8 +112,21 @@ final class AppSettings: ObservableObject {
 
     // MARK: 外观
 
-    @Published var theme: ThemeChoice { didSet { defaults.set(theme.rawValue, forKey: "settings.theme") } }
-    @Published var accent: AccentChoice { didSet { defaults.set(accent.rawValue, forKey: "settings.accent") } }
+    @Published var theme: ThemeChoice {
+        didSet {
+            defaults.set(theme.rawValue, forKey: "settings.theme")
+            // 令牌按外观在绘制时解析，换 NSApp.appearance 即全局生效（§4.5「主题」）
+            Theme.applyTheme(theme)
+        }
+    }
+    @Published var accent: AccentChoice {
+        didSet {
+            defaults.set(accent.rawValue, forKey: "settings.accent")
+            // 品牌色是绘制时解析的动态色：写入色阶并触发一次全局重解析（§4.5「强调色即时生效」）
+            Theme.accentRamp = AccentRamp.forChoice(accent)
+            Theme.refreshAccent()
+        }
+    }
     @Published var reduceMotion: Bool { didSet { defaults.set(reduceMotion, forKey: "settings.reduceMotion") } }
     @Published var showLyrics: Bool { didSet { defaults.set(showLyrics, forKey: "settings.showLyrics") } }
 
@@ -128,6 +156,9 @@ final class AppSettings: ObservableObject {
 
         imageCacheLimitGB = defaults.object(forKey: "settings.cacheLimit") as? Int ?? 2
         lastLibraryRefresh = defaults.object(forKey: "settings.lastRefresh") as? Date
+
+        // init 不触发 didSet，这里显式把强调色色阶同步给 Theme
+        Theme.accentRamp = AccentRamp.forChoice(accent)
     }
 
     /// 是否需要走服务器转码（音质非原始，或关闭了直连优先）

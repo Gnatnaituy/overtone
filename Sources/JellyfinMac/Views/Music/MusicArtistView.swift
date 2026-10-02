@@ -41,7 +41,6 @@ struct MusicArtistView: View {
                         .padding(.horizontal, sizeClass.pageMargin)
                         .padding(.top, sizeClass.isNarrow ? Theme.Spacing.xxl : Theme.Spacing.section)
                         .padding(.bottom, Theme.Spacing.xxl)
-                        .background(Theme.surface)
 
                     VStack(alignment: .leading, spacing: Theme.Spacing.section) {
                         if vm.isLoading && vm.albums.isEmpty && vm.tracks.isEmpty {
@@ -62,7 +61,6 @@ struct MusicArtistView: View {
             .scrollIndicators(.hidden)
             .background(ScrollBarHider())
         }
-        .background(Theme.canvas.ignoresSafeArea())
         .task {
             await vm.load()
             appeared = true
@@ -80,7 +78,7 @@ struct MusicArtistView: View {
         )
         .frame(width: coverSize, height: coverSize)
         .clipShape(Circle())
-        .elevation(.e2)
+        .elevation(.e2, cornerRadius: coverSize / 2)
 
         if sizeClass.detailStacksVertically {
             VStack(alignment: .leading, spacing: Theme.Spacing.xxl) {
@@ -96,7 +94,7 @@ struct MusicArtistView: View {
     }
 
     private var headerInfo: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
+        VStack(alignment: .leading, spacing: Theme.Spacing.md) {
             Eyebrow(text: "艺人")
 
             Text(artist.name ?? "")
@@ -115,7 +113,7 @@ struct MusicArtistView: View {
                     MusicPlayerModel.shared.play(tracks: vm.tracks, startAt: 0)
                 } label: {
                     Label("播放", systemImage: "play.fill")
-                        .frame(minWidth: 76)
+                        .frame(minWidth: 88)
                 }
                 .buttonStyle(PrimaryButtonStyle())
                 .disabled(vm.tracks.isEmpty)
@@ -175,6 +173,7 @@ struct MusicArtistView: View {
             TrackTable(
                 tracks: Array(vm.tracks.prefix(10)),
                 sizeClass: sizeClass,
+                showHeader: false,
                 onTap: { index in
                     MusicPlayerModel.shared.play(tracks: vm.tracks, startAt: index)
                 }
