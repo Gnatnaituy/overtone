@@ -56,7 +56,6 @@ struct PlaylistDetailView: View {
                         .padding(.horizontal, sizeClass.pageMargin)
                         .padding(.top, sizeClass.isNarrow ? Theme.Spacing.xxl : Theme.Spacing.section)
                         .padding(.bottom, Theme.Spacing.xxl)
-                        .background(Theme.surface)
 
                     trackSection
                         .padding(.horizontal, sizeClass.pageMargin)
@@ -69,7 +68,6 @@ struct PlaylistDetailView: View {
             .scrollIndicators(.hidden)
             .background(ScrollBarHider())
         }
-        .background(Theme.canvas.ignoresSafeArea())
         .task {
             await store.loadIfNeeded()
             recomputeTracks()
@@ -84,14 +82,18 @@ struct PlaylistDetailView: View {
             }
             Button("取消", role: .cancel) {}
         }
-        .alert("删除播放列表", isPresented: $showDeleteConfirm) {
-            Button("删除", role: .destructive) {
+        // 破坏性操作走统一二次确认弹窗（§4.5）
+        .onChange(of: showDeleteConfirm) { wantsDelete in
+            guard wantsDelete else { return }
+            showDeleteConfirm = false
+            DialogCenter.shared.confirm(
+                title: "删除播放列表",
+                message: "确定要删除「\(livePlaylist?.name ?? "")」吗？此操作不可撤销。",
+                confirmTitle: "删除"
+            ) {
                 if let live = livePlaylist { playlistStore.delete(live) }
                 onBack()
             }
-            Button("取消", role: .cancel) {}
-        } message: {
-            Text("确定要删除「\(livePlaylist?.name ?? "")」吗？此操作不可撤销。")
         }
     }
 
@@ -120,7 +122,7 @@ struct PlaylistDetailView: View {
     }
 
     private var headerInfo: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
+        VStack(alignment: .leading, spacing: Theme.Spacing.md) {
             Eyebrow(text: isSmart ? "智能播放列表" : "播放列表")
 
             Text(livePlaylist?.name ?? playlist.name)

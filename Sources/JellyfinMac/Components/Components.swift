@@ -16,6 +16,7 @@ struct WindowDragArea: NSViewRepresentable {
         private var anchorOrigin: NSPoint = .zero
 
         override func mouseDown(with event: NSEvent) {
+            FileHandle.standardError.write("DRAGAREA down\n".data(using: .utf8)!)
             anchorMouse = NSEvent.mouseLocation
             anchorOrigin = window?.frame.origin ?? .zero
         }
@@ -53,6 +54,22 @@ extension View {
     func acceptClickThrough() -> some View {
         background(AcceptClickThrough())
     }
+
+    /// 把命中区扩到 ≥44×44pt，**视觉尺寸与布局占位都不变**（§5.3 规则 1）。
+    ///
+    /// 做法：向外 padding 撑到最小命中区 → 在该尺寸上定义 contentShape → 再负 padding
+    /// 把布局占位收回来。渲染不受影响（padding 区不画背景），只有热区变大。
+    /// 触屏 / Catalyst 移植时这条底线同样生效。
+    func hitExpand(from visualSize: CGFloat, to minimum: CGFloat = 44) -> some View {
+        let inset = max((minimum - visualSize) / 2, 0)
+        guard inset > 0 else { return AnyView(self) }
+        return AnyView(
+            self
+                .padding(inset)
+                .contentShape(Rectangle())
+                .padding(-inset)
+        )
+    }
 }
 
 // MARK: - 隐藏滚动条
@@ -87,6 +104,8 @@ struct ScrollBarHider: NSViewRepresentable {
 // MARK: - 均衡器动效（正在播放指示）
 
 /// 三根跳动的频谱柱，TimelineView 驱动（无 Timer 泄漏，暂停时静止）。
+/// 不设 minimumInterval：跟随屏幕刷新率（ProMotion 120Hz / 普通屏 60Hz），
+/// 动画交给系统 display link 节奏，不自行推帧。
 /// 开启「减少动态效果」时静止为三根等高柱（§8 动效）。
 struct EqualizerBars: View {
     var active: Bool = true
@@ -103,7 +122,7 @@ struct EqualizerBars: View {
             if reduceMotion {
                 staticBars
             } else {
-                TimelineView(.animation(minimumInterval: 1.0 / 40.0, paused: !active)) { context in
+                TimelineView(.animation(paused: !active)) { context in
                     let t = context.date.timeIntervalSinceReferenceDate
                     HStack(spacing: barWidth * 0.8) {
                         ForEach(0..<3, id: \.self) { i in
@@ -184,7 +203,7 @@ struct PrimaryButtonStyle: ButtonStyle {
     }
 }
 
-/// 次级按钮：`surface` 底 + `borderDefault` 描边，文字 `textPrimary`
+/// 次级按钮：玻璃材质（§7.4 `SecondaryButtonStyle` 接材质令牌），文字 `textPrimary`
 struct SecondaryButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.appReduceMotion) private var reduceMotion
@@ -197,12 +216,9 @@ struct SecondaryButtonStyle: ButtonStyle {
             .frame(height: compact ? Theme.Size.buttonHeightSm : Theme.Size.buttonHeight)
             .background(
                 RoundedRectangle(cornerRadius: Theme.Radius.md)
-                    .fill(configuration.isPressed ? Theme.surfaceHover : Theme.surface)
+                    .fill(configuration.isPressed ? Theme.surfaceHover : Color.clear)
             )
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.Radius.md)
-                    .strokeBorder(Theme.borderDefault)
-            )
+            .glassControl(cornerRadius: Theme.Radius.md)
             .opacity(isEnabled ? 1 : 0.45)
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
             .animation(Theme.Motion.micro, value: configuration.isPressed)
@@ -254,8 +270,8 @@ struct DangerButtonStyle: ButtonStyle {
 
 // MARK: - 图标按钮（28 / 32 / 44 三档，必须有 accessibilityLabel）
 
-/// 圆形图标按钮：`surface` 圆底 + 描边，hover 换 `surfaceHover`。
-/// - 热区 ≥ 28pt；键盘聚焦时显示焦点环；
+/// 圆形图标按钮：玻璃圆底（§7.4），hover 换 `surfaceHover`。
+/// - 视觉 28/32/44 三档，**命中区一律 ≥44×44pt**（§5.3）；
 /// - 选中态用 `brandTint` 底 + `brand500` 描边（不只靠颜色，配 `isOn` 图标差异）。
 struct IconButton: View {
     let systemName: String
@@ -275,9 +291,9 @@ struct IconButton: View {
                 .font(.system(size: iconSize, weight: .medium))
                 .foregroundStyle(foreground)
                 .frame(width: size, height: size)
-                .background(Circle().fill(background))
-                .overlay(Circle().strokeBorder(border))
+                .background(surface)
                 .contentShape(Circle())
+                .hitExpand(from: size)
         }
         .buttonStyle(.plain)
         .acceptClickThrough()
@@ -300,21 +316,25 @@ struct IconButton: View {
 
     private var foreground: Color {
         if let tint { return tint }
-        return isOn ? Theme.brand500 : Theme.textSecondary
+        return isOn ? Theme.brandText : Theme.textSecondary
     }
 
-    private var background: Color {
-        if isOn { return Theme.surfaceSelected }
-        return hovered ? Theme.surfaceHover : Theme.surface
-    }
-
-    private var border: Color {
-        if isOn { return Theme.brand500 }
-        return Theme.borderDefault
+    @ViewBuilder
+    private var surface: some View {
+        if isOn {
+            // 选中态：实底 tint + 主色描边（玻璃下选中要压得住底下的氛围色）
+            Circle()
+                .fill(Theme.surfaceSelected)
+                .overlay(Circle().strokeBorder(Theme.brand500))
+        } else {
+            Circle()
+                .fill(hovered ? Theme.surfaceHover : Color.clear)
+                .glassControl(cornerRadius: size / 2)
+        }
     }
 }
 
-/// 无底框的纯图标按钮（工具栏内联用），热区 28pt
+/// 无底框的纯图标按钮（工具栏 / 行内联用）：视觉 28pt，命中区 ≥44×44pt
 struct PlainIconButton: View {
     let systemName: String
     let label: String
@@ -330,13 +350,14 @@ struct PlainIconButton: View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: size < 32 ? 13 : 15, weight: .medium))
-                .foregroundStyle(tint ?? (isOn ? Theme.brand500 : (hovered ? Theme.textPrimary : Theme.textSecondary)))
+                .foregroundStyle(tint ?? (isOn ? Theme.brandText : (hovered ? Theme.textPrimary : Theme.textSecondary)))
                 .frame(width: size, height: size)
                 .background(
                     RoundedRectangle(cornerRadius: Theme.Radius.sm)
                         .fill(hovered ? Theme.surfaceHover : Color.clear)
                 )
                 .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.sm))
+                .hitExpand(from: size)
         }
         .buttonStyle(.plain)
         .acceptClickThrough()
@@ -409,14 +430,8 @@ struct SegmentedControl: View {
         }
         .padding(3)
         .frame(height: Theme.Size.segmentedHeight)
-        .background(
-            RoundedRectangle(cornerRadius: Theme.Radius.sm + 3)
-                .fill(Theme.surfaceSunken)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: Theme.Radius.sm + 3)
-                .strokeBorder(Theme.borderDefault)
-        )
+        // 分段容器属于 chrome 层（§7.2 规则 1）：玻璃薄材质
+        .glassControl(cornerRadius: Theme.Radius.md, strength: .thin)
         .accessibilityElement(children: .contain)
     }
 
@@ -463,6 +478,7 @@ private struct SegmentButton: View {
                     .fill(fill)
             )
             .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.sm))
+            .hitExpand(from: Theme.Size.segmentHeight, to: 44)
         }
         .buttonStyle(.plain)
         .acceptClickThrough()
@@ -503,7 +519,276 @@ struct Chip: View {
     }
 }
 
+/// 流派 / 筛选 chips，超限折叠（§2.3 超限：chips ≤3 + 「+N」展开）。
+///
+/// 展开后仍可收起，键盘与读屏都能到达（「+N」是一个真按钮，不是装饰）。
+struct ChipRow: View {
+    let items: [String]
+    /// 折叠时最多显示几枚
+    var limit = 3
+
+    @State private var expanded = false
+
+    private var visible: [String] {
+        expanded ? items : Array(items.prefix(limit))
+    }
+
+    private var overflow: Int { max(items.count - limit, 0) }
+
+    var body: some View {
+        HStack(spacing: Theme.Spacing.sm) {
+            ForEach(visible, id: \.self) { item in
+                Chip(text: item)
+            }
+            if overflow > 0 {
+                Button {
+                    expanded.toggle()
+                } label: {
+                    Chip(text: expanded ? "收起" : "+\(overflow)")
+                }
+                .buttonStyle(.plain)
+                .hitExpand(from: 22, to: 32)
+                .help(expanded ? "收起流派标签" : "展开其余 \(overflow) 个流派标签")
+                .accessibilityLabel(expanded ? "收起流派标签" : "展开其余 \(overflow) 个流派标签")
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("流派")
+    }
+}
+
+// MARK: - 内联横幅（§2.1 错误：服务器不可达等全局提示）
+
+/// 顶栏下方的内联横幅：图标 + 文案 + 可选操作。
+/// 颜色不是唯一载体 —— 永远带警示/对勾图标与文字说明（§5.5）。
+struct InlineBanner: View {
+    enum Kind {
+        case error, warning, info
+
+        var systemImage: String {
+            switch self {
+            case .error: return "exclamationmark.triangle.fill"
+            case .warning: return "exclamationmark.circle.fill"
+            case .info: return "info.circle.fill"
+            }
+        }
+
+        var tint: Color {
+            switch self {
+            case .error: return Theme.danger
+            case .warning: return Theme.warning
+            case .info: return Theme.brandText
+            }
+        }
+    }
+
+    let kind: Kind
+    let message: String
+    var actionTitle: String?
+    var onAction: (() -> Void)?
+
+    var body: some View {
+        HStack(spacing: Theme.Spacing.lg) {
+            Image(systemName: kind.systemImage)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(kind.tint)
+            Text(message)
+                .textStyle(.bodySM, color: Theme.textPrimary)
+                .lineLimit(2)
+            Spacer(minLength: Theme.Spacing.md)
+            if let actionTitle, let onAction {
+                Button(actionTitle, action: onAction)
+                    .buttonStyle(GhostButtonStyle(compact: true))
+            }
+        }
+        .padding(.horizontal, Theme.Spacing.xl)
+        .frame(minHeight: 44)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.Radius.md)
+                .fill(kind.tint.opacity(0.10))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.md)
+                .strokeBorder(kind.tint.opacity(0.35))
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isStaticText)
+    }
+}
+
+// MARK: - 确认弹窗（宽 420，圆角 14 + e3；破坏性操作主位为危险按钮）
+
+/// 二次确认弹窗（§4.5）：退出登录 / 清除缓存 / 删除等破坏性操作必配。
+struct ConfirmDialog: View {
+    let title: String
+    let message: String
+    var confirmTitle = "确认"
+    var isDestructive = true
+    let onConfirm: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        ZStack {
+            Theme.scrim
+                .ignoresSafeArea()
+                .onTapGesture(perform: onCancel)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
+                Text(title)
+                    .textStyle(.title4, color: Theme.textPrimary)
+                    .accessibilityAddTraits(.isHeader)
+                Text(message)
+                    .textStyle(.bodySM, color: Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: Theme.Spacing.lg) {
+                    Spacer(minLength: 0)
+                    Button("取消", action: onCancel)
+                        .buttonStyle(GhostButtonStyle(compact: true))
+                        .keyboardShortcut(.cancelAction)
+                    Button(confirmTitle, action: onConfirm)
+                        .buttonStyle(isDestructive ? AnyButtonStyle(DangerButtonStyle(compact: true))
+                                                   : AnyButtonStyle(PrimaryButtonStyle(compact: true)))
+                }
+                .padding(.top, Theme.Spacing.xs)
+            }
+            .padding(Theme.Spacing.xxxl)
+            .frame(width: 420, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.Radius.lg)
+                    .fill(Theme.surface)
+            )
+            .glassPanel(.thick, cornerRadius: Theme.Radius.lg, elevation: .e3)
+            .accessibilityElement(children: .contain)
+        }
+        .transition(.opacity)
+    }
+}
+
+/// 类型擦除的按钮样式（弹窗里主 / 危险按钮二选一）
+struct AnyButtonStyle: ButtonStyle {
+    private let make: (Configuration) -> AnyView
+
+    init<S: ButtonStyle>(_ style: S) {
+        make = { AnyView(style.makeBody(configuration: $0)) }
+    }
+
+    func makeBody(configuration: Configuration) -> some View {
+        make(configuration)
+    }
+}
+
+/// 挂在根视图：`ConfirmDialog` 的呈现层（一次只允许一个弹窗）。
+///
+/// 主窗口与设置窗口各挂一份 host，请求记录**发起窗口**，只有那个窗口渲染弹窗 ——
+/// 否则同一个请求会在两个窗口里各弹一次。
+private struct DialogHost: ViewModifier {
+    @ObservedObject private var center = DialogCenter.shared
+    @State private var hostWindow: NSWindow?
+
+    func body(content: Content) -> some View {
+        content
+            .background(WindowProbe { hostWindow = $0 })
+            .overlay {
+                if let request = center.request, isTarget(request) {
+                    ConfirmDialog(
+                        title: request.title,
+                        message: request.message,
+                        confirmTitle: request.confirmTitle,
+                        isDestructive: request.isDestructive,
+                        onConfirm: {
+                            center.dismiss()
+                            request.onConfirm()
+                        },
+                        onCancel: { center.dismiss() }
+                    )
+                }
+            }
+            .animation(Theme.Motion.base, value: center.request?.id)
+    }
+
+    private func isTarget(_ request: ConfirmRequest) -> Bool {
+        guard let target = request.window else { return true }
+        guard let hostWindow else { return false }
+        return target === hostWindow
+    }
+}
+
+/// 读取自身所在窗口（弹窗归属判定用）
+private struct WindowProbe: NSViewRepresentable {
+    let onWindow: (NSWindow?) -> Void
+
+    func makeNSView(context: Context) -> NSView { ProbeView(onWindow: onWindow) }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private final class ProbeView: NSView {
+        let onWindow: (NSWindow?) -> Void
+
+        init(onWindow: @escaping (NSWindow?) -> Void) {
+            self.onWindow = onWindow
+            super.init(frame: .zero)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError() }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            let window = self.window
+            DispatchQueue.main.async { [onWindow] in onWindow(window) }
+        }
+    }
+}
+
+extension View {
+    func dialogHost() -> some View { modifier(DialogHost()) }
+}
+
+struct ConfirmRequest: Identifiable, Equatable {
+    let id = UUID()
+    let title: String
+    let message: String
+    var confirmTitle: String = "确认"
+    var isDestructive = true
+    /// 发起请求的窗口：弹窗只在该窗口渲染
+    var window: NSWindow?
+    let onConfirm: () -> Void
+
+    static func == (lhs: ConfirmRequest, rhs: ConfirmRequest) -> Bool { lhs.id == rhs.id }
+}
+
+@MainActor
+final class DialogCenter: ObservableObject {
+    static let shared = DialogCenter()
+
+    @Published private(set) var request: ConfirmRequest?
+
+    private init() {}
+
+    func confirm(
+        title: String,
+        message: String,
+        confirmTitle: String = "确认",
+        isDestructive: Bool = true,
+        onConfirm: @escaping () -> Void
+    ) {
+        request = ConfirmRequest(
+            title: title,
+            message: message,
+            confirmTitle: confirmTitle,
+            isDestructive: isDestructive,
+            window: NSApp.keyWindow ?? WindowManager.mainWindow,
+            onConfirm: onConfirm
+        )
+    }
+
+    func dismiss() { request = nil }
+}
+
 /// 快速入口胶囊（首页：收藏 / 最近播放 / 最常播放 / 随机播放全部）
+///
+/// 视觉高 32（§2.1），命中区 44 —— 行高 44 由外层保证。
 struct QuickPill: View {
     let title: String
     let systemImage: String
@@ -512,6 +797,7 @@ struct QuickPill: View {
 
     @State private var hovered = false
     @FocusState private var focused: Bool
+    @Environment(\.appReduceMotion) private var reduceMotion
 
     var body: some View {
         Button(action: action) {
@@ -522,13 +808,15 @@ struct QuickPill: View {
                 Text(title)
                     .textStyle(.bodySM, weight: .medium, color: Theme.textPrimary)
             }
-            .padding(.horizontal, 16)
-            .frame(height: 44)
+            .padding(.horizontal, 14)
+            .frame(height: 32)
             .background(
-                Capsule().fill(hovered ? Theme.surfaceHover : Theme.surface)
+                Capsule().fill(hovered ? Theme.surfaceHover : Color.clear)
             )
-            .overlay(Capsule().strokeBorder(Theme.borderSubtle))
+            .glassControl(cornerRadius: 16)
             .contentShape(Capsule())
+            .hitExpand(from: 32, to: 44)
+            .offset(y: Theme.lift(hovered, reduceMotion: reduceMotion) / 2)
         }
         .buttonStyle(.plain)
         .acceptClickThrough()
@@ -554,8 +842,10 @@ struct TokenField<Content: View>: View {
             .frame(height: height)
             .background(
                 RoundedRectangle(cornerRadius: Theme.Radius.md)
-                    .fill(isFocused ? Theme.surface : Theme.surfaceSunken)
+                    .fill(isFocused ? Theme.surface : Color.clear)
             )
+            // 输入框属于 chrome 层（§7.4）：玻璃材质 + 聚焦时主色描边 + 焦点环
+            .glassControl(cornerRadius: Theme.Radius.md)
             .overlay(
                 RoundedRectangle(cornerRadius: Theme.Radius.md)
                     .strokeBorder(borderColor, lineWidth: isFocused ? 1.5 : 1)
@@ -567,7 +857,7 @@ struct TokenField<Content: View>: View {
     private var borderColor: Color {
         if isError { return Theme.danger }
         if isFocused { return Theme.brand500 }
-        return Theme.borderDefault
+        return Color.clear
     }
 }
 
@@ -643,7 +933,7 @@ struct SkeletonBlock: View {
                 if !reduceMotion {
                     GeometryReader { geo in
                         LinearGradient(
-                            colors: [.clear, Color.white.opacity(0.75), .clear],
+                            colors: [.clear, Theme.shimmer, .clear],
                             startPoint: .leading,
                             endPoint: .trailing
                         )
@@ -717,7 +1007,54 @@ struct SkeletonList: View {
     }
 }
 
-// MARK: - 空态（插画 64 + 标题 16/600 + 说明 13 + 主操作）
+// MARK: - 空态（插画 64 谐波线条 + 标题 16/600 + 说明 13 + 主操作）
+
+/// 谐波线条：一条基音 + 若干振幅递减的泛音（§4.1「基音与泛音」母题）
+struct HarmonicLines: Shape {
+    var count = 3
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let steps = 48
+        for line in 0..<count {
+            let frequency = Double(line + 1)
+            let amplitude = rect.height / 2 / Double(line + 1)
+            path.move(to: CGPoint(x: rect.minX, y: rect.midY))
+            for step in 0...steps {
+                let t = Double(step) / Double(steps)
+                let point = CGPoint(
+                    x: rect.minX + rect.width * t,
+                    y: rect.midY - amplitude * sin(2 * .pi * frequency * t)
+                )
+                path.addLine(to: point)
+            }
+        }
+        return path
+    }
+}
+
+/// 空态插画：品牌色圆底 + 谐波线条 + 语义图标（装饰元素，不参与朗读）
+struct HarmonicMark: View {
+    var systemImage: String?
+    var size: CGFloat = 64
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Theme.brandTint)
+            HarmonicLines()
+                .stroke(Theme.brandText.opacity(0.32), style: StrokeStyle(lineWidth: 1.2, lineCap: .round))
+                .frame(width: size * 0.74, height: size * 0.42)
+            if let systemImage {
+                Image(systemName: systemImage)
+                    .font(.system(size: size * 0.28, weight: .regular))
+                    .foregroundStyle(Theme.brandText)
+            }
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+}
 
 struct EmptyState<Action: View>: View {
     let systemImage: String
@@ -727,14 +1064,7 @@ struct EmptyState<Action: View>: View {
 
     var body: some View {
         VStack(spacing: Theme.Spacing.md) {
-            ZStack {
-                Circle()
-                    .fill(Theme.surfaceSunken)
-                    .frame(width: 64, height: 64)
-                Image(systemName: systemImage)
-                    .font(.system(size: 24, weight: .regular))
-                    .foregroundStyle(Theme.textTertiary)
-            }
+            HarmonicMark(systemImage: systemImage)
             Text(title)
                 .textStyle(.title4, color: Theme.textPrimary)
                 .multilineTextAlignment(.center)
@@ -796,15 +1126,18 @@ struct ToastView: View {
             Image(systemName: message.systemImage)
                 .font(.system(size: 13, weight: .semibold))
             Text(message.text)
-                .textStyle(.bodySM, weight: .medium, color: .white)
+                .textStyle(.bodySM, weight: .medium, color: Theme.textOnInverse)
         }
+        .foregroundStyle(Theme.textOnInverse)
         .padding(.horizontal, Theme.Spacing.xl)
         .frame(height: 44)
-        .background(
-            RoundedRectangle(cornerRadius: Theme.Radius.md)
-                .fill(Theme.textPrimary)
+        // Toast 属于 chrome 层：玻璃厚材质 + 反色染层（§7.4）；实底回退时染层仍在，对比度不丢
+        .glassPanel(
+            .thick,
+            cornerRadius: Theme.Radius.md,
+            elevation: .e2,
+            tint: Theme.inverseSurface.opacity(0.78)
         )
-        .elevation(.e2)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isStaticText)
     }
@@ -831,7 +1164,7 @@ extension View {
     func toastHost() -> some View { modifier(ToastHost()) }
 }
 
-// MARK: - 区块标题（22/700 + 右侧操作）
+// MARK: - 区块标题（18/600 + 右侧操作，§4.3 title3 = 区块标题）
 
 struct SectionHeader<Trailing: View>: View {
     let title: String
@@ -840,7 +1173,7 @@ struct SectionHeader<Trailing: View>: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: Theme.Spacing.lg) {
             Text(title)
-                .textStyle(.title2, color: Theme.textPrimary)
+                .textStyle(.title3, color: Theme.textPrimary)
                 .accessibilityAddTraits(.isHeader)
             Spacer(minLength: 0)
             trailing()
@@ -872,6 +1205,7 @@ struct Eyebrow: View {
 /// - `⌘F` 聚焦搜索（任何场景，输入框内也生效）
 /// - `空格` 播放/暂停、`⌘→ / ⌘←` 下一曲/上一曲
 /// - `⌘1…⌘5` 切换一级页、`⌘,` 打开设置、`⌘[` 返回上一级、`⌫` 删除选中项
+/// - `⌘R` 刷新媒体库、`⌘↑ / ⌘↓` 播放列表详情内上移/下移选中曲目
 /// 焦点在文本输入框时除 `⌘F` / `⌘,` 外全部放行给输入框
 struct KeyboardShortcutHandler: NSViewRepresentable {
     struct Actions {
@@ -883,6 +1217,11 @@ struct KeyboardShortcutHandler: NSViewRepresentable {
         var onBack: () -> Void = {}
         var onDelete: () -> Void = {}
         var onEscape: () -> Void = {}
+        /// ⌘R：刷新媒体库
+        var onRefresh: () -> Void = {}
+        /// ⌘↑ / ⌘↓：播放列表内上移 / 下移选中曲目
+        var onMoveUp: () -> Void = {}
+        var onMoveDown: () -> Void = {}
     }
 
     var actions: Actions
@@ -942,6 +1281,11 @@ struct KeyboardShortcutHandler: NSViewRepresentable {
                 actions.onPrimaryPage(number)
                 return nil
             }
+            // ⌘R：刷新媒体库
+            if key == "r" { actions.onRefresh(); return nil }
+            // ⌘↑ / ⌘↓：播放列表内上移 / 下移
+            if event.keyCode == 126 { actions.onMoveUp(); return nil }
+            if event.keyCode == 125 { actions.onMoveDown(); return nil }
             // ⌘→ / ⌘←：下一曲 / 上一曲
             if event.keyCode == 124 { actions.onNext(); return nil }
             if event.keyCode == 123 { actions.onPrevious(); return nil }

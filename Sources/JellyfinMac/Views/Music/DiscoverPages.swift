@@ -2,7 +2,11 @@ import SwiftUI
 
 // MARK: - 通用曲目列表页（收藏 / 最近播放 / 最常播放共用）
 
-/// 统一样式：面包屑 + 顶栏（标题 / 搜索 / 播放全部）+ 曲目列表（行高 48）。
+/// 统一样式（§2.2 列表页骨架）：面包屑（可选）+ 顶栏（标题 / 搜索 / 随机 / 播放全部）+ 曲目列表。
+///
+/// - 行式列表走 `MusicRow`（高 48，hover / 键盘聚焦显示收藏与更多）；
+/// - 加载中 `SkeletonList`，空态 `EmptyState`（媒体库尚未加载时附「刷新媒体库」主操作）；
+/// - 构造签名保持不变（`MainView` 直接调用）。
 struct TrackListPage: View {
     let sizeClass: LayoutSizeClass
     let title: String
@@ -17,6 +21,7 @@ struct TrackListPage: View {
     var onSearchSubmit: (() -> Void)?
 
     @ObservedObject private var music = MusicPlayerModel.shared
+    @ObservedObject private var store = MusicDataStore.shared
     @State private var appeared = false
 
     private var metrics: TrackRowMetrics { TrackRowMetrics(sizeClass: sizeClass) }
@@ -61,12 +66,10 @@ struct TrackListPage: View {
 
             ScrollView {
                 PageContent(sizeClass: sizeClass) {
-                    if tracks.isEmpty {
-                        EmptyState(
-                            systemImage: emptyIcon,
-                            title: emptyText,
-                            message: emptyHint
-                        )
+                    if tracks.isEmpty && store.isLoading {
+                        SkeletonList(count: 10)
+                    } else if tracks.isEmpty {
+                        emptyState
                     } else {
                         LazyVStack(spacing: 0) {
                             ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
@@ -88,7 +91,24 @@ struct TrackListPage: View {
             .scrollIndicators(.hidden)
             .background(ScrollBarHider())
         }
-        .background(Theme.canvas.ignoresSafeArea())
         .onAppear { appeared = true }
+    }
+
+    /// 空态：媒体库本身还没加载出来时给一个「刷新媒体库」主操作，避免误判为「没有内容」
+    private var emptyState: some View {
+        EmptyState(
+            systemImage: emptyIcon,
+            title: emptyText,
+            message: emptyHint
+        ) {
+            if store.tracks.isEmpty {
+                Button {
+                    Task { await store.reload() }
+                } label: {
+                    Label("刷新媒体库", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(PrimaryButtonStyle(compact: true))
+            }
+        }
     }
 }

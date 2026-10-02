@@ -1,11 +1,12 @@
 # Overtone（泛音）
 
-原生 macOS Jellyfin 音乐客户端，SwiftUI 编写，浅色主题 + 靛蓝主音 / 泛音青双色体系。
+原生 macOS Jellyfin 音乐客户端，SwiftUI 编写，深浅双主题 + 靛蓝主音 / 泛音青双色体系，chrome 层走 Liquid Glass 玻璃材质。
 
 > **关于名字**：Overtone 是「泛音」——基音之上叠加的谐波。官方客户端之外的另一层听感；中文名本身就是现成的音乐术语。本项目是**非官方**客户端，与 Jellyfin 项目无隶属关系。
 
-界面遵循 [`docs/ui-design/UI-Design-Spec.md`](docs/ui-design/UI-Design-Spec.md)（v2 设计规范）与
-[`docs/ui-design/preview.html`](docs/ui-design/preview.html)（高保真预览）。
+界面遵循 [`docs/ui-design/UI-Redesign-v3.md`](docs/ui-design/UI-Redesign-v3.md)（v3 设计规范，「基音与泛音」）与
+[`docs/ui-design/UI-Redesign-v3-preview.html`](docs/ui-design/UI-Redesign-v3-preview.html)（双主题高保真预览，含材质开关）。
+早期版本：[`UI-Design-Spec.md`](docs/ui-design/UI-Design-Spec.md)（v2）· [`preview.html`](docs/ui-design/preview.html)（v2 预览）。
 
 ## 功能
 

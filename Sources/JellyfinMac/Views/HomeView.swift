@@ -44,7 +44,6 @@ struct HomeView: View {
             .scrollIndicators(.hidden)
             .background(ScrollBarHider())
         }
-        .background(Theme.canvas.ignoresSafeArea())
         .onAppear {
             withAnimation(Theme.Motion.base) { appeared = true }
         }
@@ -74,12 +73,13 @@ struct HomeView: View {
 
             avatarMenu
         }
-        .padding(.horizontal, sizeClass.pageMargin)
+        .padding(.horizontal, sizeClass.isNarrow ? Theme.Spacing.xl : Theme.Spacing.xxl)
         .frame(height: Theme.Size.topBarHeight)
-        .background(WindowDragArea().background(Theme.surface))
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(Theme.borderSubtle).frame(height: 1)
-        }
+        // 顶栏属于 chrome 层：悬浮玻璃面板（§7.2 规则 2）
+        .background(WindowDragArea())
+        .glassPanel(.regular, cornerRadius: Theme.Size.panelRadius, elevation: .e2)
+        .padding(.top, Theme.Size.panelMargin)
+        .padding(.horizontal, Theme.Size.panelGap)
     }
 
     private var greeting: String {
@@ -128,10 +128,10 @@ struct HomeView: View {
                 } label: {
                     HStack(spacing: Theme.Spacing.xs) {
                         Text("全部")
-                            .textStyle(.bodySM, weight: .medium, color: Theme.brand500)
+                            .textStyle(.bodySM, weight: .medium, color: Theme.brandText)
                         Image(systemName: "arrow.right")
                             .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(Theme.brand500)
+                            .foregroundStyle(Theme.brandText)
                     }
                 }
                 .buttonStyle(.plain)
@@ -182,7 +182,7 @@ struct HomeView: View {
             QuickPill(title: "收藏", systemImage: "heart", iconColor: Theme.favorite, action: onOpenFavorites)
             QuickPill(title: "最近播放", systemImage: "clock", action: onOpenRecentlyPlayed)
             QuickPill(title: "最常播放", systemImage: "flame", iconColor: Theme.warning, action: onOpenMostPlayed)
-            QuickPill(title: "随机播放全部", systemImage: "shuffle", iconColor: Theme.brand500) {
+            QuickPill(title: "随机播放全部", systemImage: "shuffle", iconColor: Theme.brandText) {
                 guard !store.tracks.isEmpty else { return }
                 MusicPlayerModel.shared.play(tracks: store.tracks.shuffled(), startAt: 0)
                 onOpenNowPlaying()
@@ -259,10 +259,10 @@ struct HomeView: View {
                 } label: {
                     HStack(spacing: Theme.Spacing.xs) {
                         Text("全部")
-                            .textStyle(.bodySM, weight: .medium, color: Theme.brand500)
+                            .textStyle(.bodySM, weight: .medium, color: Theme.brandText)
                         Image(systemName: "arrow.right")
                             .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(Theme.brand500)
+                            .foregroundStyle(Theme.brandText)
                     }
                 }
                 .buttonStyle(.plain)
@@ -340,8 +340,12 @@ struct HomeView: View {
 
         var subtitle: String {
             let artist = track.albumArtist ?? ""
-            let position = track.indexNumber.map { "第 \($0) 首" } ?? ""
-            return [artist, position].filter { !$0.isEmpty }.joined(separator: " · ")
+            // §2.1：副标 = 艺人 · 剩余时长（多端续听时最关心的信息）
+            let remaining = max(track.runtimeSeconds - track.resumeSeconds, 0)
+            let remainText = remaining > 30
+                ? "剩 \(max(Int((remaining / 60).rounded(.up)), 1)) 分钟"
+                : ""
+            return [artist, remainText].filter { !$0.isEmpty }.joined(separator: " · ")
         }
 
         var progress: Double {
@@ -371,7 +375,7 @@ private struct ContinueCard: View {
                 RemoteImage(url: item.track.artworkURL(width: 200), contentMode: .fill)
                     .frame(width: 88, height: 88)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
-                    .elevation(.e1)
+                    .elevation(.e1, cornerRadius: Theme.Radius.md)
                     .overlay {
                         if hovered || focused {
                             ZStack {
@@ -385,34 +389,37 @@ private struct ContinueCard: View {
                         }
                     }
 
-                VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+                VStack(alignment: .leading, spacing: 3) {
                     Text(item.title)
-                        .textStyle(.body, weight: .semibold, color: Theme.textPrimary)
-                        .lineLimit(1)
+                        .textStyle(.bodySM, weight: .semibold, color: Theme.textPrimary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                     Text(item.subtitle)
-                        .textStyle(.footnote, color: Theme.textSecondary)
+                        .textStyle(.caption, color: Theme.textSecondary)
                         .lineLimit(1)
 
-                    Capsule()
-                        .fill(Theme.borderDefault)
-                        .frame(height: 3)
-                        .overlay(alignment: .leading) {
-                            GeometryReader { geo in
-                                Capsule()
-                                    .fill(Theme.brand500)
-                                    .frame(width: max(3, geo.size.width * item.progress))
+                    // 进度条 3pt + 百分比（§2.1：进度是这张卡的第三层信息）
+                    HStack(spacing: Theme.Spacing.sm) {
+                        Capsule()
+                            .fill(Theme.borderSubtle)
+                            .frame(height: 3)
+                            .overlay(alignment: .leading) {
+                                GeometryReader { geo in
+                                    Capsule()
+                                        .fill(Theme.brand500)
+                                        .frame(width: max(3, geo.size.width * item.progress))
+                                }
                             }
-                        }
-                        .padding(.top, Theme.Spacing.xxs)
-
-                    Text(item.timeText)
-                        .textStyle(.monoSM, color: Theme.textTertiary)
-                        .lineLimit(1)
+                        Text("\(Int((item.progress * 100).rounded()))%")
+                            .textStyle(.monoSM, color: Theme.textTertiary)
+                            .fixedSize()
+                    }
+                    .padding(.top, 2)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(Theme.Spacing.lg)
-            .frame(width: 236, height: 132, alignment: .leading)
+            .frame(width: 220, height: 132, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: Theme.Radius.lg)
                     .fill(Theme.surface)
@@ -454,7 +461,7 @@ private struct TopTrackRow: View {
             HStack(spacing: Theme.Spacing.lg) {
                 ZStack {
                     if isCurrent {
-                        EqualizerBars(active: isPlaying, color: Theme.brand500, barWidth: 2.5, height: 12)
+                        EqualizerBars(active: isPlaying, color: Theme.brandText, barWidth: 2.5, height: 12)
                     } else {
                         Text("\(index + 1)")
                             .textStyle(.mono, color: Theme.textTertiary)
@@ -469,7 +476,7 @@ private struct TopTrackRow: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(track.name ?? "")
                         .textStyle(.bodySM, weight: isCurrent ? .semibold : .medium,
-                                   color: isCurrent ? Theme.brand500 : Theme.textPrimary)
+                                   color: isCurrent ? Theme.brandText : Theme.textPrimary)
                         .lineLimit(1)
                     Text(track.albumArtist ?? track.album ?? "")
                         .textStyle(.footnote, color: Theme.textSecondary)

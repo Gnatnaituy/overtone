@@ -1,6 +1,10 @@
 import SwiftUI
 
-/// 播放队列抽屉（重做）：显示当前队列、点击跳播、拖动排序、移除。
+/// 播放队列面板（重做 §7.2）：玻璃厚材质悬浮面板，显示当前队列、点击跳播、拖动排序、移除。
+///
+/// - 标题 13/600 + 计数 chip，行高 52（§4.5 列表行）；
+/// - 当前行 `surfaceSelected` + 3pt 指示条 + 频谱；hover / 键盘 focus 显示移除按钮与拖拽把手；
+/// - 排序沿用 `List` 的 `.onMove`（`music.moveQueueItems`），交互逻辑与构造签名不变。
 struct QueuePanelView: View {
     @ObservedObject private var music = MusicPlayerModel.shared
     let onClose: () -> Void
@@ -8,8 +12,6 @@ struct QueuePanelView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-
-            Rectangle().fill(Theme.borderSubtle).frame(height: 1)
 
             if music.queue.isEmpty {
                 EmptyState(
@@ -23,25 +25,17 @@ struct QueuePanelView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.surface)
-        .overlay(alignment: .leading) {
-            Rectangle()
-                .fill(Theme.borderSubtle)
-                .frame(width: 1)
-        }
+        // chrome 层（§7.2 规则 1）：抽屉 / 面板走玻璃厚材质
+        .glassPanel(.thick, cornerRadius: Theme.Size.panelRadius, elevation: .e3)
     }
 
     private var header: some View {
         HStack(spacing: Theme.Spacing.md) {
             Text("播放队列")
-                .textStyle(.body, weight: .semibold, color: Theme.textPrimary)
+                .textStyle(.bodySM, weight: .semibold, color: Theme.textPrimary)
                 .accessibilityAddTraits(.isHeader)
 
-            Text("\(music.queue.count) 首")
-                .textStyle(.caption, color: Theme.textSecondary)
-                .padding(.horizontal, Theme.Spacing.md)
-                .padding(.vertical, 2)
-                .background(Capsule().fill(Theme.surfaceSunken))
+            Chip(text: "\(music.queue.count) 首")
 
             Spacer(minLength: 0)
 
@@ -60,6 +54,7 @@ struct QueuePanelView: View {
                     isCurrent: index == music.currentIndex,
                     isPlaying: music.isPlaying && index == music.currentIndex,
                     showsIndex: true,
+                    showsHandle: true,
                     onRemove: index == music.currentIndex ? nil : { music.removeQueueItem(at: index) },
                     onTap: { music.jump(to: index) }
                 )
@@ -73,6 +68,7 @@ struct QueuePanelView: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
-        .environment(\.defaultMinListRowHeight, 56)
+        .environment(\.defaultMinListRowHeight, 52)
+        .padding(.horizontal, Theme.Spacing.xs)
     }
 }
