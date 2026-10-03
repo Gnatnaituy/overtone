@@ -71,6 +71,8 @@ struct MusicAlbumView: View {
             }
             .scrollIndicators(.hidden)
             .background(ScrollBarHider())
+            // 滚动体不参与内容列宽度协商：头部再宽也不把面包屑顶出窗口右缘
+            .pageBodyWidthClamp()
         }
         .task { await vm.load() }
     }
@@ -125,8 +127,9 @@ struct MusicAlbumView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// 操作行：可用宽度不够时换行（§4.4「操作行换行」），而不是把页面顶宽
     private var actionRow: some View {
-        HStack(spacing: Theme.Spacing.lg) {
+        FlowLayout(spacing: Theme.Spacing.lg, lineSpacing: Theme.Spacing.md) {
             Button {
                 playAll()
             } label: {

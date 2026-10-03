@@ -90,6 +90,11 @@ struct MainView: View {
             // 这里显式给内容列宽度是**硬约束**：HStack 在子视图最小宽度超过可用宽度时
             // 会把整列按最小宽度铺开并溢出到窗口右侧（顶栏搜索框、播放条右半、页面右边缘
             // 全部被裁掉）。给定宽度后，任何超宽子视图只会在列内溢出，不会顶破窗口。
+            //
+            // 光有这一层不够：页面内部还有一次最小宽度协商（滚动体 → 页面 VStack →
+            // 顶栏 / 面包屑），滚动体把内容最小宽度上报给页面，chrome 会被一起撑宽 ——
+            // 表现为顶部玻璃面板右缘连同 12pt 外边距与圆角被窗口右缘裁掉（2026-10-03
+            // 截图复现）。所以每个页面的滚动体都要 `.pageBodyWidthClamp()`（见 Theme.swift）。
             let sidebarBlock = (rail ? Theme.Size.railWidth : sidebarWidth) + Theme.Size.panelMargin
             let contentWidth = max(geo.size.width - sidebarBlock, 0)
             ZStack {
@@ -101,6 +106,10 @@ struct MainView: View {
 
                     VStack(spacing: 0) {
                         content(sizeClass: sizeClass)
+                            // 列级兜底：页面各自钳住了滚动体宽度（`pageBodyWidthClamp`），
+                            // 这里再钉一次内容列宽度，队列抽屉 overlay 与迷你播放条就永远
+                            // 按内容列对齐，不会被某个超宽页面推到窗口右缘之外。
+                            .pageBodyWidthClamp()
                             // 队列抽屉只覆盖内容区，不遮挡底部播放条
                             .overlay(alignment: .trailing) {
                                 if showQueue {
