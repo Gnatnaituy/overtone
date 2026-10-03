@@ -40,6 +40,8 @@ struct MusicLibraryView: View {
             }
             .scrollIndicators(.hidden)
             .background(ScrollBarHider())
+            // 滚动体不参与内容列宽度协商：内容再宽也不把顶栏顶出窗口右缘（§7.2 规则 3）
+            .pageBodyWidthClamp()
         }
         .onAppear { appeared = true }
         .task {

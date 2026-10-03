@@ -38,11 +38,16 @@ struct NowPlayingView: View {
                 VStack(spacing: 0) {
                     topBar
 
-                    if sizeClass.nowPlayingUsesSideQueue {
-                        wideLayout(height: geo.size.height)
-                    } else {
-                        narrowLayout(height: geo.size.height)
+                    Group {
+                        if sizeClass.nowPlayingUsesSideQueue {
+                            wideLayout(height: geo.size.height)
+                        } else {
+                            narrowLayout(height: geo.size.height)
+                        }
                     }
+                    // 主体不参与内容列宽度协商：宽窗「主区 + 320 右栏」的最小宽度超过
+                    // 内容列时（侧栏可拖到 320），顶栏会被撑宽并溢出窗口右缘（§7.2 规则 3）
+                    .pageBodyWidthClamp()
                 }
 
                 // 窄窗：待播抽屉 + 遮罩（宽窗走右栏，不叠层）
