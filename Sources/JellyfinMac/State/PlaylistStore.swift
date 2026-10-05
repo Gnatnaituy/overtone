@@ -27,11 +27,25 @@ final class PlaylistStore: ObservableObject {
 
     var allPlaylists: [Playlist] { playlists + smartPlaylists }
 
-    private var fileURL: URL {
+    /// 变更版本号：任何一次改动（都经由 `save()`）自增。
+    ///
+    /// 视图用 `.onChange(of: playlistStore.revision)` 代替
+    /// `.onChange(of: playlistStore.allPlaylists)`：后者每次 body 更新都要把
+    /// `playlists + smartPlaylists` 拼一遍再逐项比较 `trackIds`（O(Σ 曲目数)），
+    /// 而它挂在会随播放状态频繁重渲染的详情页上。
+    private(set) var revision = 0
+
+    /// 数据文件位置。**只解析一次**：`FileManager.urls(for:in:)` 会走系统目录查询，
+    /// 而原实现把它放在计算属性里，每次 `save()` / `load()` 都要查两遍。
+    private let fileURL: URL = {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("JellyfinMac", isDirectory: true)
         return dir.appendingPathComponent("playlists.json")
-    }
+    }()
+
+    /// 后台写入状态：见 `save()` 的合并策略
+    private var isWriting = false
+    private var pendingWrite = false
 
     private init() { load() }
 
@@ -124,12 +138,25 @@ final class PlaylistStore: ObservableObject {
     func remove(trackId: String, from playlist: Playlist) {
         guard !playlist.isSmart else { return }
         guard let i = playlists.firstIndex(where: { $0.id == playlist.id }) else { return }
-        playlists[i].trackIds.removeAll { $0 == trackId }
-        playlists[i].itemMap?[trackId] = nil
+        // 先取出服务器条目 id 再清理本地映射：`pushRemove` 靠它定位服务器条目，
+        // 提前把 itemMap[trackId] 清掉会让它退化成「拉取整个播放列表条目再查找」——
+        // 每次从已同步列表移除一首都要多一次全量 GET + JSON 解码。
+        let knownEntryId = playlists[i].itemMap?[trackId]
+        let serverId = playlists[i].serverId
+        // 一次性赋值：分开改 trackIds 与 itemMap 会触发两次 @Published，白重绘两轮
+        var updated = playlists[i]
+        updated.trackIds.removeAll { $0 == trackId }
+        updated.itemMap?[trackId] = nil
+        playlists[i] = updated
         save()
-        if let serverId = playlists[i].serverId {
-            let snapshot = playlists[i]
-            Task { try? await PlaylistSyncService.shared.pushRemove(playlist: snapshot, trackId: trackId) }
+        if let serverId {
+            Task {
+                try? await PlaylistSyncService.shared.pushRemove(
+                    serverId: serverId,
+                    trackId: trackId,
+                    knownEntryId: knownEntryId
+                )
+            }
         }
     }
 
@@ -197,12 +224,46 @@ final class PlaylistStore: ObservableObject {
 
     // MARK: - 持久化
 
+    /// 持久化：**编码与落盘放到后台**，并合并写入期间的连续变更。
+    ///
+    /// 原实现每次变更都在主线程同步跑 `JSONEncoder().encode(全表)` + 原子写
+    /// （建临时文件 + rename）。而 `PlaylistSyncService.syncAll` 会对每个服务器播放列表
+    /// 调一次 `importFromServer` / `updateFromServer`，各自触发一次 `save()` ——
+    /// N 个列表就是 N 次「编码全表 + 落盘」，写放大是 O(N²)，且全程卡住主线程
+    /// （同步发生在启动阶段，直接表现为启动后界面卡顿）。
+    ///
+    /// 现在：第一次变更立即写（不延迟，保持原有"改完即落盘"的时效），
+    /// 写入期间的后续变更只打标记，写完再补一次 —— 连续同步最多两次落盘。
     private func save() {
+        // 所有变更路径都会走到这里，版本号在此统一自增（供视图做 O(1) 变更检测）
+        revision &+= 1
+        guard !isWriting else {
+            pendingWrite = true
+            return
+        }
+        isWriting = true
+        let snapshot = allPlaylists
+        let url = fileURL
+        // 主 actor 上的轻量任务：真正的编码/落盘在 nonisolated async 里跳到协作线程池执行
+        Task { @MainActor in
+            await Self.write(snapshot, to: url)
+            isWriting = false
+            if pendingWrite {
+                pendingWrite = false
+                save()
+            }
+        }
+    }
+
+    /// 实际落盘（nonisolated async：从主 actor 调用时会切到后台执行）
+    private nonisolated static func write(_ playlists: [Playlist], to url: URL) async {
         do {
-            let dir = fileURL.deletingLastPathComponent()
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            let data = try JSONEncoder().encode(allPlaylists)
-            try data.write(to: fileURL, options: .atomic)
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            let data = try JSONEncoder().encode(playlists)
+            try data.write(to: url, options: .atomic)
         } catch {
             print("[PlaylistStore] save failed: \(error)")
         }

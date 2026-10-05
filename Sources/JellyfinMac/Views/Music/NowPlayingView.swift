@@ -7,7 +7,6 @@ struct NowPlayingView: View {
     let sizeClass: LayoutSizeClass
 
     @ObservedObject private var music = MusicPlayerModel.shared
-    @ObservedObject private var progress = MusicPlayerModel.shared.progress
     @ObservedObject private var settings = AppSettings.shared
 
     @Environment(\.appReduceMotion) private var reduceMotion
@@ -16,16 +15,21 @@ struct NowPlayingView: View {
     @State private var showLyrics = false
     @State private var lyrics: [LyricLine]?
     @State private var lyricsFailed = false
+    /// 已拉取（或已确认无歌词）的曲目 id：换曲才重新请求，避免重复 GET
+    @State private var lyricsTrackId: String?
     /// 窄窗待播抽屉
     @State private var queueDrawerOpen = false
     /// 待播清单显隐（宽窗）
     @State private var showQueueColumn = true
     /// 封面取色（氛围层 §4.1）；nil → 回落品牌色系
     @State private var palette: Palette?
-    /// 进度条 hover（把手显隐）
-    @State private var progressHovered = false
     /// 主播放键 hover（放大反馈）
     @State private var playHovered = false
+
+    // 注意：这里**不**观察 `MusicPlayerModel.shared.progress`。
+    // 它每 0.5s 发布一次 position，而本页只有「进度条」和「歌词高亮」依赖它；
+    // 在页面级观察会让整页（大封面、控制行、待播清单、氛围层）每秒重算两次。
+    // 依赖进度的两块各自封装成子视图，观察范围收在它们内部。
 
     /// Reduce Motion 下位移动画归零，只保留 120ms 透明度过渡
     private var toggleAnimation: Animation {
@@ -57,19 +61,21 @@ struct NowPlayingView: View {
             }
         }
         .task(id: music.currentTrack?.id) { await loadPalette() }
+        // 歌词拉取挂成 .task(id:)：换曲 / 切到歌词页都会重启它，
+        // 上一轮未完成的请求由 SwiftUI 自动取消（原来用游离 `Task {}`，不会取消）
+        .task(id: lyricsRequestKey) { await loadLyricsIfNeeded() }
         .onAppear {
             showLyrics = settings.showLyrics
             appeared = true
-            if showLyrics { Task { await loadLyricsIfNeeded() } }
-        }
-        .onChange(of: music.currentTrack?.id) { _ in
-            lyrics = nil
-            lyricsFailed = false
-            if showLyrics { Task { await loadLyricsIfNeeded() } }
         }
         .animation(reduceMotion ? Theme.Motion.reduced : Theme.Motion.spring, value: showLyrics)
         .animation(toggleAnimation, value: queueDrawerOpen)
         .animation(Theme.Motion.spring, value: showQueueColumn)
+    }
+
+    /// 歌词请求键：曲目或「封面 / 歌词」切换变化时重启歌词任务
+    private var lyricsRequestKey: String {
+        "\(music.currentTrack?.id ?? "-")|\(showLyrics)"
     }
 
     // MARK: - 顶栏
@@ -146,12 +152,12 @@ struct NowPlayingView: View {
             coverLyricsSwitch
 
             if showLyrics {
-                lyricsPane
+                LyricsPane(lyrics: lyrics, failed: lyricsFailed)
             } else {
                 coverPane(maxCover: maxCover)
             }
 
-            progressSection
+            NowPlayingProgressSection()
                 .frame(maxWidth: 480)
 
             controls
@@ -194,7 +200,7 @@ struct NowPlayingView: View {
                     guard wantsLyrics != showLyrics else { return }
                     showLyrics = wantsLyrics
                     settings.showLyrics = wantsLyrics
-                    if wantsLyrics { Task { await loadLyricsIfNeeded() } }
+                    // 无需手动触发拉取：lyricsRequestKey 变化会重启歌词任务
                 }
             )
         )
@@ -243,75 +249,8 @@ struct NowPlayingView: View {
 
     // MARK: - 进度条（左右时间码 40 + 可拖动 / 键盘 ±5s）
 
-    private var progressSection: some View {
-        HStack(spacing: 10) {
-            Text(formatPlaybackTime(progress.position))
-                .textStyle(.monoSM, color: Theme.textSecondary)
-                .frame(width: 40, alignment: .leading)
-
-            scrubBar
-
-            Text(formatPlaybackTime(progress.duration))
-                .textStyle(.monoSM, color: Theme.textSecondary)
-                .frame(width: 40, alignment: .trailing)
-        }
-        .frame(maxWidth: 480)
-    }
-
-    private var scrubBar: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(Theme.borderDefault)
-
-                Capsule()
-                    .fill(Theme.brand500)
-                    .frame(width: max(4, geo.size.width * progressRatio))
-                    .animation(progressHovered || reduceMotion ? nil : .linear(duration: 0.5),
-                               value: progressRatio)
-
-                if progressHovered {
-                    Circle()
-                        .fill(Theme.brand500)
-                        .frame(width: 10, height: 10)
-                        .offset(x: min(max(0, geo.size.width * progressRatio - 5),
-                                       max(geo.size.width - 10, 0)))
-                }
-            }
-            .frame(height: 4)
-            .frame(maxHeight: .infinity)
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        music.scrub(ratio: value.location.x / max(geo.size.width, 1))
-                    }
-                    .onEnded { _ in
-                        music.endScrub()
-                    }
-            )
-        }
-        .frame(height: 12)
-        .onHover { progressHovered = $0 }
-        .animation(Theme.Motion.micro, value: progressHovered)
-        .accessibilityElement()
-        .accessibilityLabel("播放进度")
-        .accessibilityValue("\(formatPlaybackTime(progress.position)) / \(formatPlaybackTime(progress.duration))")
-        // 键盘 / VoiceOver 微调 ±5s
-        .accessibilityAdjustableAction { direction in
-            let step = 5.0
-            switch direction {
-            case .increment: music.seekTo(position: progress.position + step)
-            case .decrement: music.seekTo(position: progress.position - step)
-            @unknown default: break
-            }
-        }
-    }
-
-    private var progressRatio: Double {
-        guard progress.duration > 0 else { return 0 }
-        return min(max(progress.position / progress.duration, 0), 1)
-    }
+    // 进度条与歌词高亮见文件末尾的 `NowPlayingProgressSection` / `LyricsPane`：
+    // 它们各自观察 `PlaybackProgress`，把 2Hz 的重算限制在自身范围内。
 
     // MARK: - 5 键控制（随机 40 / 上一曲 40 / 主播放 56 / 下一曲 40 / 循环 40，间距 22）
 
@@ -585,75 +524,32 @@ struct NowPlayingView: View {
     // MARK: - 歌词
 
     private func loadLyricsIfNeeded() async {
-        guard lyrics == nil, !lyricsFailed else { return }
-        guard let itemId = music.currentTrack?.id else { return }
+        guard showLyrics, let itemId = music.currentTrack?.id else { return }
+        // 这首已经拉过（拿到歌词或已确认没有）就不重复请求
+        guard lyricsTrackId != itemId else { return }
+        // 清空上一首的歌词：放在这里而不是 onChange，避免与 .task 抢执行顺序
+        // （onChange 后跑会把刚拉回来的歌词又清掉）
+        lyrics = nil
+        lyricsFailed = false
         do {
             let fetched = try await APIClient.shared.fetchLyrics(itemId: itemId)
+            // 快速切歌时先发的请求可能后返回：丢弃不属于当前曲目的结果，
+            // 否则会把上一首的歌词盖到当前曲目上
+            guard !Task.isCancelled, music.currentTrack?.id == itemId else { return }
             lyrics = fetched
             lyricsFailed = fetched.isEmpty
+            lyricsTrackId = itemId
         } catch {
+            guard !Task.isCancelled, music.currentTrack?.id == itemId else { return }
             lyrics = []
             lyricsFailed = true
+            lyricsTrackId = itemId
         }
     }
 
-    /// 当前应高亮的歌词行（时间戳 ≤ 播放进度的最后一行）
-    private var activeLyricIndex: Int? {
-        guard let lyrics else { return nil }
-        var index: Int?
-        for (i, line) in lyrics.enumerated() {
-            if let start = line.startSeconds, start <= progress.position + 0.2 {
-                index = i
-            } else if line.startSeconds != nil {
-                break
-            }
-        }
-        return index
-    }
-
-    /// 歌词行：当前行 16/600 `brandText`，其余 14 `textTertiary`（§4.1 第二谐波语义）
-    private var lyricsPane: some View {
-        Group {
-            if let lyrics, !lyrics.isEmpty {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(spacing: 14) {
-                            ForEach(Array(lyrics.enumerated()), id: \.offset) { index, line in
-                                let isActive = index == activeLyricIndex
-                                Text(line.text ?? "")
-                                    .textStyle(
-                                        isActive ? .title4 : .body,
-                                        weight: isActive ? .semibold : nil,
-                                        color: isActive ? Theme.brandText : Theme.textTertiary
-                                    )
-                                    .frame(maxWidth: .infinity)
-                                    .multilineTextAlignment(.center)
-                                    .id(index)
-                                    .animation(Theme.Motion.base, value: isActive)
-                            }
-                        }
-                        .padding(.vertical, Theme.Spacing.lg)
-                    }
-                    .onChange(of: activeLyricIndex) { index in
-                        guard let index else { return }
-                        withAnimation(reduceMotion ? Theme.Motion.reduced : Theme.Motion.base) {
-                            proxy.scrollTo(index, anchor: .center)
-                        }
-                    }
-                }
-                .frame(maxWidth: 420)
-                .frame(height: 260)
-            } else if lyricsFailed {
-                EmptyState(systemImage: "text.alignleft", title: "没有找到歌词")
-            } else {
-                ProgressView()
-                    .frame(maxWidth: .infinity, minHeight: 180)
-            }
-        }
-        .transition(.opacity)
-    }
-
-    // MARK: - 封面取色（氛围层数据源）
+    /// 当前应高亮的歌词行（时间戳 ≤ 播放进度的最后一行）—— 见 `LyricsPane`。
+    ///
+    /// 封面取色（氛围层数据源）
 
     /// 用与封面同一个 URL 取图（命中同一份缓存），取色失败回落品牌色系。
     @MainActor
@@ -956,5 +852,162 @@ extension NowPlayingView {
         let track: BaseItemDto
 
         var id: Int { index }
+    }
+}
+
+// MARK: - 进度条（单独观察播放进度）
+
+/// 「正在播放」页的进度区：左右时间码 + 可拖动进度条。
+///
+/// 为什么单独成视图：`PlaybackProgress.position` 每 0.5s 发布一次，页面级观察会让
+/// 整页（大封面、氛围层、控制行、待播清单）每秒重算两次。把观察收在这里之后，
+/// 2Hz 的重算范围只剩这条进度条与两个时间码。
+private struct NowPlayingProgressSection: View {
+    @ObservedObject private var progress = MusicPlayerModel.shared.progress
+    @Environment(\.appReduceMotion) private var reduceMotion
+    /// 进度条 hover（把手显隐）
+    @State private var progressHovered = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(formatPlaybackTime(progress.position))
+                .textStyle(.monoSM, color: Theme.textSecondary)
+                .frame(width: 40, alignment: .leading)
+
+            scrubBar
+
+            Text(formatPlaybackTime(progress.duration))
+                .textStyle(.monoSM, color: Theme.textSecondary)
+                .frame(width: 40, alignment: .trailing)
+        }
+    }
+
+    private var scrubBar: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Theme.borderDefault)
+
+                Capsule()
+                    .fill(Theme.brand500)
+                    .frame(width: max(4, geo.size.width * progressRatio))
+                    .animation(progressHovered || reduceMotion ? nil : .linear(duration: 0.5),
+                               value: progressRatio)
+
+                if progressHovered {
+                    Circle()
+                        .fill(Theme.brand500)
+                        .frame(width: 10, height: 10)
+                        .offset(x: min(max(0, geo.size.width * progressRatio - 5),
+                                       max(geo.size.width - 10, 0)))
+                }
+            }
+            .frame(height: 4)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        MusicPlayerModel.shared.scrub(ratio: value.location.x / max(geo.size.width, 1))
+                    }
+                    .onEnded { _ in
+                        MusicPlayerModel.shared.endScrub()
+                    }
+            )
+        }
+        .frame(height: 12)
+        .onHover { progressHovered = $0 }
+        .animation(Theme.Motion.micro, value: progressHovered)
+        .accessibilityElement()
+        .accessibilityLabel("播放进度")
+        .accessibilityValue("\(formatPlaybackTime(progress.position)) / \(formatPlaybackTime(progress.duration))")
+        // 键盘 / VoiceOver 微调 ±5s
+        .accessibilityAdjustableAction { direction in
+            let step = 5.0
+            switch direction {
+            case .increment: MusicPlayerModel.shared.seekTo(position: progress.position + step)
+            case .decrement: MusicPlayerModel.shared.seekTo(position: progress.position - step)
+            @unknown default: break
+            }
+        }
+    }
+
+    private var progressRatio: Double {
+        guard progress.duration > 0 else { return 0 }
+        return min(max(progress.position / progress.duration, 0), 1)
+    }
+}
+
+// MARK: - 歌词面板（单独观察播放进度）
+
+/// 歌词行：当前行 16/600 `brandText`，其余 14 `textTertiary`（§4.1 第二谐波语义）。
+///
+/// 单独成视图的原因同 `NowPlayingProgressSection`：只有「当前行高亮」依赖播放进度。
+private struct LyricsPane: View {
+    let lyrics: [LyricLine]?
+    let failed: Bool
+
+    @ObservedObject private var progress = MusicPlayerModel.shared.progress
+    @Environment(\.appReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Group {
+            if let lyrics, !lyrics.isEmpty {
+                // 每帧只算一次高亮行：写成 `index == activeLyricIndex` 会让
+                // ForEach 里每个已实例化的行各扫一遍歌词表（可见行数 × n 次/帧）。
+                let active = activeLyricIndex
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 14) {
+                            // 用 indices 而不是 Array(enumerated())：后者每帧都要复制一份
+                            // (offset, LyricLine) 元组数组，而 id 本来就是位置，身份不变
+                            ForEach(lyrics.indices, id: \.self) { index in
+                                let isActive = index == active
+                                Text(lyrics[index].text ?? "")
+                                    .textStyle(
+                                        isActive ? .title4 : .body,
+                                        weight: isActive ? .semibold : nil,
+                                        color: isActive ? Theme.brandText : Theme.textTertiary
+                                    )
+                                    .frame(maxWidth: .infinity)
+                                    .multilineTextAlignment(.center)
+                                    .id(index)
+                                    .animation(Theme.Motion.base, value: isActive)
+                            }
+                        }
+                        .padding(.vertical, Theme.Spacing.lg)
+                    }
+                    .onChange(of: active) { index in
+                        guard let index else { return }
+                        withAnimation(reduceMotion ? Theme.Motion.reduced : Theme.Motion.base) {
+                            proxy.scrollTo(index, anchor: .center)
+                        }
+                    }
+                }
+                .frame(maxWidth: 420)
+                .frame(height: 260)
+            } else if failed {
+                EmptyState(systemImage: "text.alignleft", title: "没有找到歌词")
+            } else {
+                ProgressView()
+                    .frame(maxWidth: .infinity, minHeight: 180)
+            }
+        }
+        .transition(.opacity)
+    }
+
+    /// 当前应高亮的歌词行（时间戳 ≤ 播放进度的最后一行）
+    private var activeLyricIndex: Int? {
+        guard let lyrics else { return nil }
+        var index: Int?
+        for (i, line) in lyrics.enumerated() {
+            if let start = line.startSeconds, start <= progress.position + 0.2 {
+                index = i
+            } else if line.startSeconds != nil {
+                // 时间戳是升序的，越过当前进度即可停
+                break
+            }
+        }
+        return index
     }
 }

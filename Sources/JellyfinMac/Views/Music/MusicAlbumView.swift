@@ -8,8 +8,11 @@ struct MusicAlbumView: View {
     let onBack: () -> Void
 
     @StateObject private var vm: MusicAlbumViewModel
-    @ObservedObject private var music = MusicPlayerModel.shared
-    @ObservedObject private var store = MusicDataStore.shared
+    // 这里**不**观察 MusicPlayerModel / MusicDataStore：
+    // - `music` 在 body 里从未被读取，但观察它会让播放/暂停、切歌、**音量拖动**
+    //   （`volume` 也是 @Published，拖一次滑块几十次发布）都重建整个专辑页；
+    // - `store` 只在收藏按钮的动作闭包里用到，观察它等于让每次曲库变更都白重绘一页。
+    // 曲目表的「当前曲」高亮由 TrackTableRows 自己观察播放器，范围收在表内。
 
     init(item: BaseItemDto, sizeClass: LayoutSizeClass, parentTitle: String, onBack: @escaping () -> Void) {
         self.item = item
@@ -102,7 +105,10 @@ struct MusicAlbumView: View {
     }
 
     private var headerInfo: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.md) {
+        // 只算一次：`metaParts` 含一次 O(曲目数) 的时长求和，
+        // 写成 `if !metaParts.isEmpty { Text(metaParts…) }` 会算两遍
+        let meta = metaParts
+        return VStack(alignment: .leading, spacing: Theme.Spacing.md) {
             Eyebrow(text: "专辑")
 
             Text(current.name ?? "")
@@ -110,8 +116,8 @@ struct MusicAlbumView: View {
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if !metaParts.isEmpty {
-                Text(metaParts.joined(separator: " · "))
+            if !meta.isEmpty {
+                Text(meta.joined(separator: " · "))
                     .textStyle(.bodySM, color: Theme.textSecondary)
                     .lineLimit(1)
             }
@@ -155,7 +161,7 @@ struct MusicAlbumView: View {
                 isOn: current.userData?.isFavorite == true,
                 tint: current.userData?.isFavorite == true ? Theme.favorite : nil
             ) {
-                Task { await store.toggleFavorite(current) }
+                Task { await MusicDataStore.shared.toggleFavorite(current) }
             }
 
             albumMenu

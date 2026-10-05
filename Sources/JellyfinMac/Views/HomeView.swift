@@ -155,7 +155,7 @@ struct HomeView: View {
         }
     }
 
-    private func playContinue(_ item: ContinueItem) {
+    private func playContinue(_ item: MusicDataStore.ContinueEntry) {
         let albumTracks = store.tracks
             .filter { ($0.albumId ?? $0.id) == item.albumKey }
             .sorted { ($0.parentIndexNumber ?? 0, $0.indexNumber ?? 0) < ($1.parentIndexNumber ?? 0, $1.indexNumber ?? 0) }
@@ -241,13 +241,12 @@ struct HomeView: View {
     }
 
     private var recentAlbums: [BaseItemDto] {
+        // 三种排序都由 MusicDataStore 预排好：这里 O(1) 取用，
+        // 不再每次渲染都对整个专辑库排序（首页 body 会因搜索输入/窗口尺寸/播放状态高频重跑）
         switch recentSort {
-        case .dateAdded:
-            return store.albums.sorted { ($0.dateCreated ?? "") > ($1.dateCreated ?? "") }
-        case .name:
-            return store.albums.sorted { ($0.name ?? "") < ($1.name ?? "") }
-        case .artist:
-            return store.albums.sorted { ($0.albumArtist ?? "") < ($1.albumArtist ?? "") }
+        case .dateAdded: return store.albumsByDateAdded
+        case .name: return store.albumsByName
+        case .artist: return store.albumsByArtist
         }
     }
 
@@ -316,55 +315,18 @@ struct HomeView: View {
 
     // MARK: - 继续播放数据
 
-    private var continueItems: [ContinueItem] {
-        var seen = Set<String>()
-        var result: [ContinueItem] = []
-        let candidates = store.tracks
-            .filter { $0.resumeSeconds > 5 && $0.runtimeSeconds > 0 }
-            .sorted { ($0.userData?.lastPlayedDate ?? "") > ($1.userData?.lastPlayedDate ?? "") }
-        for track in candidates {
-            let key = track.albumId ?? track.id
-            guard !seen.contains(key) else { continue }
-            seen.insert(key)
-            result.append(ContinueItem(track: track, albumKey: key))
-            if result.count >= 6 { break }
-        }
-        return result
-    }
-
-    struct ContinueItem: Identifiable {
-        let track: BaseItemDto
-        let albumKey: String
-
-        var id: String { albumKey }
-
-        var title: String { track.album ?? track.name ?? "未知专辑" }
-
-        var subtitle: String {
-            let artist = track.albumArtist ?? ""
-            // §2.1：副标 = 艺人 · 剩余时长（多端续听时最关心的信息）
-            let remaining = max(track.runtimeSeconds - track.resumeSeconds, 0)
-            let remainText = remaining > 30
-                ? "剩 \(max(Int((remaining / 60).rounded(.up)), 1)) 分钟"
-                : ""
-            return [artist, remainText].filter { !$0.isEmpty }.joined(separator: " · ")
-        }
-
-        var progress: Double {
-            guard track.runtimeSeconds > 0 else { return 0 }
-            return min(max(track.resumeSeconds / track.runtimeSeconds, 0), 1)
-        }
-
-        var timeText: String {
-            "\(formatPlaybackTime(track.resumeSeconds)) / \(formatPlaybackTime(track.runtimeSeconds))"
-        }
+    /// 由 `MusicDataStore` 在曲目变化时算好（按专辑去重 + 倒序），这里只读缓存。
+    /// 原来每次渲染都要对全库过滤 + 排序，而本视图的 body 会被搜索输入、
+    /// 播放状态、窗口尺寸变化反复触发。
+    private var continueItems: [MusicDataStore.ContinueEntry] {
+        store.continueEntries
     }
 }
 
 // MARK: - 继续播放卡片（220×132）
 
 private struct ContinueCard: View {
-    let item: HomeView.ContinueItem
+    let item: MusicDataStore.ContinueEntry
     let onPlay: () -> Void
 
     @State private var hovered = false

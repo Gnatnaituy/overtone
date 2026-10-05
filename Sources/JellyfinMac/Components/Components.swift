@@ -16,7 +16,8 @@ struct WindowDragArea: NSViewRepresentable {
         private var anchorOrigin: NSPoint = .zero
 
         override func mouseDown(with event: NSEvent) {
-            FileHandle.standardError.write("DRAGAREA down\n".data(using: .utf8)!)
+            // 注意：这里不要留调试输出。拖拽区覆盖整个 chrome 层（顶栏 / 面包屑），
+            // 每次点击都是一次同步 stderr 写系统调用（JellyfinApp 还关了 stdio 缓冲）。
             anchorMouse = NSEvent.mouseLocation
             anchorOrigin = window?.frame.origin ?? .zero
         }
@@ -1305,13 +1306,21 @@ struct KeyboardShortcutHandler: NSViewRepresentable {
 
 // MARK: - 时间格式化
 
+/// 秒 → `m:ss` / `h:mm:ss`。
+///
+/// 不用 `String(format:)`：它要桥接到 NSString 并解析格式串，而本函数在列表里
+/// 每行调用两次（时长列 + 无障碍标签），千行列表单次渲染就是 2000 次格式解析。
+/// 整数插值走 Swift 原生路径，输出完全一致且无桥接开销。
 func formatPlaybackTime(_ seconds: Double) -> String {
     guard seconds.isFinite, seconds >= 0 else { return "0:00" }
     let total = Int(seconds)
     let h = total / 3600
     let m = (total % 3600) / 60
     let s = total % 60
-    return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
+    let ss = s < 10 ? "0\(s)" : "\(s)"
+    guard h > 0 else { return "\(m):\(ss)" }
+    let mm = m < 10 ? "0\(m)" : "\(m)"
+    return "\(h):\(mm):\(ss)"
 }
 
 /// 曲目集合总时长（页面头元信息用）：小时为单位紧凑显示

@@ -102,6 +102,49 @@ struct AccentRamp {
     }
 }
 
+/// 由强调色色阶派生的一整套品牌令牌，**构造一次后缓存**。
+///
+/// 为什么必须缓存（实测数据）：`Color(nsColor:)` 包出来的动态色按**实例标识**比较 ——
+/// 同一段配方构造的两个动态色 `isEqual` 为 `false`，包成 `Color` 后 `==` 也是 `false`；
+/// 而纯色 `NSColor` 的 `Color` 相等性正常（`true`）。构造一个动态色约 **633ns**，
+/// 纯色只要 **22ns**（28 倍）。
+///
+/// 后果：`Theme.brand500` 这类令牌若每次访问都新建，SwiftUI 拿到的永远是「变了的」值 ——
+/// 它靠视图值的 `Equatable` 跳过未变化的子树，令牌不稳定就等于**放弃了这层跳过**，
+/// 卡片网格里每个选中态 / 品牌色元素每次渲染都被判定为需要重绘。
+struct AccentTokens {
+    let brand400: Color
+    let brand500: Color
+    let brand600: Color
+    let brandText: Color
+    let brandTint: Color
+    let surfaceSelected: Color
+    let gradient: LinearGradient
+
+    init(_ ramp: AccentRamp) {
+        // 色阶由闭包捕获（不是在绘制时读全局）：`accentRamp` 的 didSet 会整体重建本结构，
+        // 所以缓存里的色阶始终是当前那一套
+        brand400 = Color(accentDynamic: { ramp.light })
+        brand500 = Color(accentDynamic: { ramp.base })
+        brand600 = Color(accentDynamic: { ramp.dark })
+        // 需要「外观 + 强调色」共同决定：深色主题下品牌文字用提亮档
+        brandText = Color(appearanceDynamic: { appearance in
+            appearance.isDark ? ramp.text : ramp.base
+        })
+        brandTint = Color(appearanceDynamic: { appearance in
+            ramp.base.withAlphaComponent(appearance.isDark ? 0.16 : 0.08)
+        })
+        surfaceSelected = Color(appearanceDynamic: { appearance in
+            ramp.base.withAlphaComponent(appearance.isDark ? 0.18 : 0.08)
+        })
+        gradient = LinearGradient(
+            colors: [brand400, brand600],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+}
+
 // MARK: - 设计令牌（v2）
 
 /// Overtone 设计令牌：浅色主题 + 靛蓝主音 / 泛音青双色体系。
@@ -122,12 +165,6 @@ enum Theme {
     static let surfaceSunken = Color(token: 0xF2F3F6, 0x1D212A)
     /// 行悬停
     static let surfaceHover = Color(token: 0xEEF0F4, 0x222732)
-    /// 选中行底色（强调色染；深色底上需要更高浓度才看得出来）
-    static var surfaceSelected: Color {
-        Color(appearanceDynamic: { appearance in
-            accentRamp.base.withAlphaComponent(appearance.isDark ? 0.18 : 0.08)
-        })
-    }
 
     // MARK: 描边（Borders）—— 深色下承担浅色主题里阴影的分层职责
 
@@ -149,20 +186,25 @@ enum Theme {
     ///
     /// Theme 令牌要能在任意上下文读取（视图、模型、默认参数值），不能直接依赖
     /// `@MainActor` 的 AppSettings，所以这里存一份非隔离的镜像。
+    ///
+    /// 写入时**整体重建**派生令牌缓存（`accentTokens`）：品牌色令牌必须保持实例稳定，
+    /// 否则每次访问都返回不相等的 `Color`，SwiftUI 的相等性跳过机制全部失效
+    /// （原因与实测数据见 `AccentTokens`）。
     static var accentRamp: AccentRamp = .fixed(
         base: 0x4C53D8, light: 0x6B71E3, dark: 0x3E45C0, text: 0xA5AAFF
-    )
-
-    static var brand400: Color { Color(accentDynamic: { accentRamp.light }) }
-    /// 主色**实底**：深浅主题一致（白字 5.94:1 ✅）
-    static var brand500: Color { Color(accentDynamic: { accentRamp.base }) }
-    static var brand600: Color { Color(accentDynamic: { accentRamp.dark }) }
-    /// 品牌色**文字/图标**：浅色用主色，深色用提亮档（主色在深底上对比度不足）
-    static var brandText: Color {
-        Color(appearanceDynamic: { appearance in
-            appearance.isDark ? accentRamp.text : accentRamp.base
-        })
+    ) {
+        didSet { accentTokens = AccentTokens(accentRamp) }
     }
+
+    /// 品牌令牌缓存（首次访问时按当前 `accentRamp` 构造）
+    private static var accentTokens = AccentTokens(accentRamp)
+
+    static var brand400: Color { accentTokens.brand400 }
+    /// 主色**实底**：深浅主题一致（白字 5.94:1 ✅）
+    static var brand500: Color { accentTokens.brand500 }
+    static var brand600: Color { accentTokens.brand600 }
+    /// 品牌色**文字/图标**：浅色用主色，深色用提亮档（主色在深底上对比度不足）
+    static var brandText: Color { accentTokens.brandText }
 
     /// 设置页「强调色」三个色块：固定值，**不随当前强调色变化**
     static let accentIndigo = Color(hex: 0x4C53D8)
@@ -170,23 +212,15 @@ enum Theme {
     static let accentPurple = Color(hex: 0x7C4DDB)
 
     /// 选中底、焦点光晕
-    static var brandTint: Color {
-        Color(appearanceDynamic: { appearance in
-            accentRamp.base.withAlphaComponent(appearance.isDark ? 0.16 : 0.08)
-        })
-    }
+    static var brandTint: Color { accentTokens.brandTint }
+    /// 选中行底色（强调色染；深色底上需要更高浓度才看得出来）
+    static var surfaceSelected: Color { accentTokens.surfaceSelected }
     /// 第二谐波：频谱柱、正在播放律动（装饰用，固定泛音青，深色提亮）
     static let overtoneTeal = Color(token: 0x12B8A6, 0x2AD3C0)
     /// 青色文字态（浅色 5.12:1 / 深色 9.77:1 ✅ AA）
     static let tealText = Color(token: 0x0B7C6A, 0x45D6C3)
 
-    static var brandGradient: LinearGradient {
-        LinearGradient(
-            colors: [brand400, brand600],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-    }
+    static var brandGradient: LinearGradient { accentTokens.gradient }
 
     // MARK: 语义（Semantic）
 
@@ -344,16 +378,8 @@ enum Theme {
         /// 正在播放大封面、设置窗口
         case e3
 
-        var color: Color { Color(hex: 0x10141C) }
-
-        /// (radius, y, opacity) 组合；CSS blur 半径约为 SwiftUI radius 的 2 倍
-        var layers: [(radius: CGFloat, y: CGFloat, opacity: Double)] {
-            switch self {
-            case .e1: return [(1, 1, 0.06)]
-            case .e2: return [(4, 2, 0.08), (1, 1, 0.06)]
-            case .e3: return [(14, 12, 0.12), (3, 2, 0.06)]
-            }
-        }
+        /// 阴影色（缓存实例：每次访问都新建的 `Color` 不相等，会破坏 SwiftUI 的跳过机制）
+        static let color = Color(hex: 0x10141C)
     }
 
     // MARK: - 动效
@@ -571,15 +597,24 @@ private struct ElevationModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         let dark = colorScheme == .dark
-        let shadowed = elevation.layers.reduce(AnyView(content)) { view, layer in
-            AnyView(
-                view.shadow(
-                    // 深色下投影几乎不可见，按 §4.2 规则 1 降到 30% 强度
-                    color: elevation.color.opacity(layer.opacity * (dark ? 0.3 : 1)),
-                    radius: layer.radius,
-                    y: layer.y
-                )
-            )
+        // 深色下投影几乎不可见，按 §4.2 规则 1 降到 30% 强度
+        let scale = dark ? 0.3 : 1.0
+        // 按档位展开成固定层数：不再用 AnyView 逐层包裹。
+        // AnyView 会抹掉静态类型、让 SwiftUI 无法按结构比较视图，
+        // 而这段修饰符挂在每一张卡片 / 每一行上，代价被行数放大。
+        let shadowed = Group {
+            switch elevation {
+            case .e1:
+                content.shadow(color: Theme.Elevation.color.opacity(0.06 * scale), radius: 1, y: 1)
+            case .e2:
+                content
+                    .shadow(color: Theme.Elevation.color.opacity(0.08 * scale), radius: 4, y: 2)
+                    .shadow(color: Theme.Elevation.color.opacity(0.06 * scale), radius: 1, y: 1)
+            case .e3:
+                content
+                    .shadow(color: Theme.Elevation.color.opacity(0.12 * scale), radius: 14, y: 12)
+                    .shadow(color: Theme.Elevation.color.opacity(0.06 * scale), radius: 3, y: 2)
+            }
         }
         if dark, let cornerRadius {
             // 深色层级主要由描边承担（表面明度阶梯 + borderSubtle 描边）
@@ -766,24 +801,28 @@ private struct GlassShadow: ViewModifier {
     let elevation: Theme.Elevation?
     let solid: Bool
 
+    /// 单层投影参数（nil 档位 = 不投影）
+    private var shadow: (opacity: Double, radius: CGFloat, y: CGFloat)? {
+        switch elevation {
+        case .none: return nil
+        case .e1: return (solid ? 0.06 : 0.10, 4, 2)
+        case .e2: return (solid ? 0.08 : 0.14, 10, 6)
+        case .e3: return (solid ? 0.12 : 0.18, 20, 12)
+        }
+    }
+
     func body(content: Content) -> some View {
-        guard let elevation else { return AnyView(content) }
-        let opacity: Double
-        switch elevation {
-        case .e1: opacity = solid ? 0.06 : 0.10
-        case .e2: opacity = solid ? 0.08 : 0.14
-        case .e3: opacity = solid ? 0.12 : 0.18
+        // ViewBuilder 的 if/else 生成 _ConditionalContent（静态类型，SwiftUI 可结构比较），
+        // 不像 AnyView 那样抹掉类型；nil 档位直接不挂 shadow，避免无谓的离屏通道
+        if let spec = shadow {
+            content.shadow(
+                color: Theme.glassShadow.opacity(spec.opacity / 0.14),
+                radius: spec.radius,
+                y: spec.y
+            )
+        } else {
+            content
         }
-        let radius: CGFloat
-        let y: CGFloat
-        switch elevation {
-        case .e1: radius = 4; y = 2
-        case .e2: radius = 10; y = 6
-        case .e3: radius = 20; y = 12
-        }
-        return AnyView(
-            content.shadow(color: Theme.glassShadow.opacity(opacity / 0.14), radius: radius, y: y)
-        )
     }
 }
 

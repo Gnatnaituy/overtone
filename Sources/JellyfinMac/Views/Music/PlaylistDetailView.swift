@@ -75,8 +75,10 @@ struct PlaylistDetailView: View {
             recomputeTracks()
             appeared = true
         }
-        .onChange(of: store.tracks) { _ in recomputeTracks() }
-        .onChange(of: playlistStore.allPlaylists) { _ in recomputeTracks() }
+        // O(1) 变更检测：直接比较 `store.tracks` / `allPlaylists` 每次 body 更新
+        // 都要做 O(曲库) / O(Σ 曲目数) 的比较，而本页会随播放状态频繁重渲染
+        .onChange(of: store.dataRevision) { _ in recomputeTracks() }
+        .onChange(of: playlistStore.revision) { _ in recomputeTracks() }
         .alert("重命名播放列表", isPresented: $showRename) {
             TextField("名称", text: $renameText)
             Button("确定") {
@@ -224,7 +226,8 @@ struct PlaylistDetailView: View {
         } else {
             let metrics = TrackRowMetrics(sizeClass: sizeClass)
             LazyVStack(spacing: 0) {
-                ForEach(Array(computedTracks.enumerated()), id: \.element.id) { index, track in
+                ForEach(computedTracks.indices, id: \.self) { index in
+                    let track = computedTracks[index]
                     MusicRow(
                         track: track,
                         index: index,

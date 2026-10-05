@@ -60,8 +60,10 @@ enum LibrarySegment: String, CaseIterable {
 struct MainView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.appReduceMotion) private var reduceMotion
-    @ObservedObject private var music = MusicPlayerModel.shared
-    @ObservedObject private var playlistStore = PlaylistStore.shared
+    // 注意：这里**不**观察 MusicPlayerModel / PlaylistStore。
+    // 观察它们会让播放/暂停、切歌、队列变化、播放列表增删都重建整个界面
+    // （侧栏 + 当前页 + 播放条），而 MainView 本身只需要知道「要不要显示播放条」——
+    // 那个判断已下沉到 MiniPlayerSlot，播放列表列表由 SidebarPanel 自己观察。
 
     /// 导航栈：一级切换 = 替换栈；二级推进 = push
     @State private var stack: [ContentPage] = []
@@ -120,7 +122,7 @@ struct MainView: View {
                             }
                             .animation(Theme.Motion.spring, value: showQueue)
 
-                        miniPlayer(sizeClass: sizeClass)
+                        miniPlayer
                     }
                     // 硬约束宽度见下方 sidebarBlock 注释；alignment 用 leading：
                     // 内容列左缘始终钉在侧栏一侧，即便出现瞬态超宽也只会向右溢出，
@@ -447,17 +449,16 @@ struct MainView: View {
 
     // MARK: - 底部迷你播放条
 
+    /// 只把「显示 / 隐藏」的判断交给 MiniPlayerSlot，
+    /// 播放状态变化就不会波及 MainView 的整个视图树。
     @ViewBuilder
-    private func miniPlayer(sizeClass: LayoutSizeClass) -> some View {
-        if music.currentTrack != nil && currentPage != .nowPlaying {
-            MiniPlayerBar(
-                onOpen: { selectPage(.nowPlaying) },
-                onToggleQueue: { showQueue.toggle() },
-                isQueueVisible: showQueue
-            )
-            .transition(reduceMotion ? .opacity : .offset(y: 12).combined(with: .opacity))
-            .animation(Theme.Motion.spring, value: music.currentTrack?.id)
-        }
+    private var miniPlayer: some View {
+        MiniPlayerSlot(
+            isNowPlayingPage: currentPage == .nowPlaying,
+            onOpen: { selectPage(.nowPlaying) },
+            onToggleQueue: { showQueue.toggle() },
+            isQueueVisible: showQueue
+        )
     }
 
     // MARK: - 快捷键
@@ -557,6 +558,35 @@ struct MainView: View {
         case .library: return .library
         case .playlists: return .playlists
         case .nowPlaying: return .nowPlaying
+        }
+    }
+}
+
+// MARK: - 迷你播放条槽位（隔离播放状态观察）
+
+/// 决定迷你播放条显隐的最小视图。
+///
+/// `MusicPlayerModel` 的 `queue` / `currentIndex` / `isPlaying` 都会频繁发布，
+/// 若由 `MainView` 直接观察，每次播放/暂停、切歌、增删队列都会重建整个界面。
+/// 把观察收在这一个零布局成本的槽位里，重算范围就只剩播放条本身。
+private struct MiniPlayerSlot: View {
+    let isNowPlayingPage: Bool
+    let onOpen: () -> Void
+    let onToggleQueue: () -> Void
+    let isQueueVisible: Bool
+
+    @ObservedObject private var music = MusicPlayerModel.shared
+    @Environment(\.appReduceMotion) private var reduceMotion
+
+    var body: some View {
+        if music.currentTrack != nil && !isNowPlayingPage {
+            MiniPlayerBar(
+                onOpen: onOpen,
+                onToggleQueue: onToggleQueue,
+                isQueueVisible: isQueueVisible
+            )
+            .transition(reduceMotion ? .opacity : .offset(y: 12).combined(with: .opacity))
+            .animation(Theme.Motion.spring, value: music.currentTrack?.id)
         }
     }
 }

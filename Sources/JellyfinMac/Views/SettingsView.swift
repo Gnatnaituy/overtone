@@ -261,10 +261,16 @@ struct SettingsView: View {
 
     private var lastRefreshText: String {
         guard let date = settings.lastLibraryRefresh else { return "—" }
+        return Self.lastRefreshFormatter.string(from: date)
+    }
+
+    /// `DateFormatter` 的构造（含 `dateFormat` 赋值）要建 ICU 格式器，代价在 0.1–1ms 量级，
+    /// 不能放在每次 body 求值都会跑的计算属性里 —— 媒体库分组会随设置项与曲库发布重渲染。
+    private static let lastRefreshFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HH:mm"
-        return formatter.string(from: date)
-    }
+        return formatter
+    }()
 
     @MainActor
     private func refreshLibrary() async {

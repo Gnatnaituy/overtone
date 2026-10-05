@@ -42,7 +42,21 @@ final class APIClient {
         return (custom?.isEmpty == false ? custom! : "Overtone")
     }
     private let deviceName = "Mac"
-    private let deviceId = "mac-\(UUID().uuidString)"
+    /// 设备 ID：**跨启动稳定**。
+    ///
+    /// 原实现每次启动都 `UUID().uuidString` 现生成 —— Jellyfin 以 `DeviceId` 识别设备，
+    /// 于是每次启动都会在服务端新建一个会话 / 设备记录，旧记录不会被清理：
+    /// 设备列表与 `/Sessions` 响应随启动次数无限增长，多端播放进度的归并也会
+    /// 把同一台机器当成新设备。首次启动生成后落盘复用。
+    private let deviceId: String = {
+        let key = "clientDeviceId"
+        if let existing = UserDefaults.standard.string(forKey: key), !existing.isEmpty {
+            return existing
+        }
+        let generated = "mac-\(UUID().uuidString)"
+        UserDefaults.standard.set(generated, forKey: key)
+        return generated
+    }()
     private let appVersion = "1.0.0"
 
     // MARK: - 请求

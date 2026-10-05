@@ -10,6 +10,24 @@ final class PlaybackProgress: ObservableObject {
     @Published var duration: Double = 0
 }
 
+/// 音量：独立可观察对象（与 `PlaybackProgress` 同样的理由）。
+///
+/// 拖动音量滑块时 `level` 以拖动事件频率发布（60–120Hz）。它若挂在 `MusicPlayerModel`
+/// 上，所有观察播放器的视图 —— 曲库整表、待播清单、专辑页、首页 —— 都会跟着每帧重建，
+/// 而它们只关心「在播哪首 / 是否在播」。拆出来之后，拖音量只重绘音量控件自身。
+///
+/// 播放器的实际音量由 `MusicPlayerModel` 装配的 `onLevelChange` 回写；
+/// 淡入 / 睡眠定时器的临时衰减直接写 `AVPlayer.volume`，不经过这里（否则又会按帧发布）。
+@MainActor
+final class PlaybackVolume: ObservableObject {
+    @Published var level: Double = 1.0 {
+        didSet { onLevelChange?(level) }
+    }
+
+    /// 回写通道（由 `MusicPlayerModel` 装配）
+    var onLevelChange: ((Double) -> Void)?
+}
+
 /// 全局音乐播放器：浏览页面间持续播放，支持专辑队列顺序播放
 /// 含：队列管理（跳播/排序/插播）、系统媒体键（MPRemoteCommandCenter）、
 ///     Now Playing 信息、睡眠定时器、切歌淡入
@@ -19,6 +37,8 @@ final class MusicPlayerModel: ObservableObject {
 
     /// 播放进度（独立发布，见 PlaybackProgress）
     let progress = PlaybackProgress()
+    /// 音量（独立发布，见 PlaybackVolume）
+    let volume = PlaybackVolume()
 
     enum PlayMode: String, CaseIterable {
         case sequential
@@ -52,9 +72,6 @@ final class MusicPlayerModel: ObservableObject {
     @Published var isPlaying = false
     @Published var isLoading = false
     @Published var errorMessage: String?
-    @Published var volume: Double = 1.0 {
-        didSet { player.volume = Float(volume) }
-    }
     @Published var playMode: PlayMode = .sequential
     /// 睡眠定时截止时刻（nil = 未设置）
     @Published var sleepTimerEnd: Date?
@@ -74,7 +91,11 @@ final class MusicPlayerModel: ObservableObject {
     var hasQueue: Bool { !queue.isEmpty }
 
     init() {
-        player.volume = Float(volume)
+        player.volume = Float(volume.level)
+        // 音量变化的唯一回写点（淡入 / 睡眠渐弱走 player.volume 直写，不经过这里）
+        volume.onLevelChange = { [weak self] level in
+            self?.player.volume = Float(level)
+        }
         timeObserver = player.addPeriodicTimeObserver(
             forInterval: CMTime(seconds: 0.5, preferredTimescale: 600),
             queue: .main
@@ -244,7 +265,7 @@ final class MusicPlayerModel: ObservableObject {
         sleepTimer = nil
         guard let minutes else {
             sleepTimerEnd = nil
-            player.volume = Float(volume)
+            player.volume = Float(volume.level)
             return
         }
         sleepTimerEnd = Date().addingTimeInterval(minutes * 60)
@@ -261,7 +282,7 @@ final class MusicPlayerModel: ObservableObject {
             fadeOutAndPause()
         } else if remaining < 5, isPlaying {
             // 最后 5 秒线性渐弱
-            player.volume = Float(volume) * Float(max(remaining / 5, 0))
+            player.volume = Float(volume.level) * Float(max(remaining / 5, 0))
         }
     }
 
@@ -270,7 +291,7 @@ final class MusicPlayerModel: ObservableObject {
         player.pause()
         isPlaying = false
         reporter?.update(position: progress.position, paused: true)
-        player.volume = Float(volume)
+        player.volume = Float(volume.level)
         updateNowPlayingInfo()
     }
 
@@ -324,7 +345,7 @@ final class MusicPlayerModel: ObservableObject {
     private func startFadeIn() {
         fadeTimer?.invalidate()
         fadeTimer = nil
-        let target = Float(volume)
+        let target = Float(volume.level)
         let duration = AppSettings.shared.fadeDuration
         guard duration > 0 else {
             player.volume = target

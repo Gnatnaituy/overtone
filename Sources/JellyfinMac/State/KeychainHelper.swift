@@ -41,3 +41,25 @@ enum KeychainHelper {
         SecItemDelete(query as CFDictionary)
     }
 }
+
+// MARK: - 异步封装
+
+/// `SecItem*` 是**同步** XPC 往返（典型 1–10ms，securityd 繁忙或被锁时更久）。
+/// 调用点全在主 actor 上 —— 启动自动登录（`AppState.restoreSession`）、登录、退出登录 ——
+/// 同步调用会把这段时间直接压在主线程上（启动路径上尤其明显，发生在首帧之前）。
+/// 这里统一挪到后台线程。
+extension KeychainHelper {
+    static func readAsync(account: String) async -> String? {
+        await Task.detached(priority: .userInitiated) { read(account: account) }.value
+    }
+
+    static func saveAsync(password: String, account: String) async {
+        await Task.detached(priority: .utility) {
+            _ = save(password: password, account: account)
+        }.value
+    }
+
+    static func deleteAsync(account: String) async {
+        await Task.detached(priority: .utility) { delete(account: account) }.value
+    }
+}

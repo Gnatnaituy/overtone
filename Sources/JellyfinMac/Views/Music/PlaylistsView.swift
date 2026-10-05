@@ -24,11 +24,13 @@ struct PlaylistsView: View {
     @State private var newSmartKeyword = ""
 
     var body: some View {
-        VStack(spacing: 0) {
+        // 一次取用（拼接数组，每次访问都新建）：顶栏副标题要用到数量
+        let all = playlistStore.allPlaylists
+        return VStack(spacing: 0) {
             PageTopBar(
                 sizeClass: sizeClass,
                 title: "播放列表",
-                subtitle: playlistStore.allPlaylists.isEmpty ? nil : "\(playlistStore.allPlaylists.count) 个",
+                subtitle: all.isEmpty ? nil : "\(all.count) 个",
                 searchText: $searchQuery,
                 searchFocusRequest: searchFocusRequest,
                 onSearchSubmit: onSearchSubmit
@@ -157,7 +159,9 @@ struct PlaylistsView: View {
                     }
                 }
             } else {
-                VStack(spacing: 0) {
+                // LazyVStack：列表模式下每行都会跑 `.task { recompute() }`（智能列表要全库匹配），
+                // 用非惰性 VStack 会让所有行在首帧同时开工
+                LazyVStack(spacing: 0) {
                     ForEach(Array(playlists.enumerated()), id: \.element.id) { index, playlist in
                         PlaylistRow(playlist: playlist) { onOpenPlaylist(playlist) }
                         if index < playlists.count - 1 {
@@ -250,7 +254,8 @@ private struct PlaylistRow: View {
         .help(playlist.name)
         .accessibilityLabel(accessibilityLabel)
         .task { recompute() }
-        .onChange(of: store.tracks) { _ in recompute() }
+        // O(1) 变更检测：`onChange(of: store.tracks)` 每次 body 更新都要比较整个曲库
+        .onChange(of: store.dataRevision) { _ in recompute() }
     }
 
     /// 「智能」badge：`brandTint` 底 + `brandText` 字 + 11pt（§2.2 / 预览 `.badge`）
@@ -323,8 +328,11 @@ struct PlaylistGrid: View {
     private var metrics: TrackRowMetrics { TrackRowMetrics(sizeClass: sizeClass) }
 
     var body: some View {
-        Group {
-            if playlistStore.allPlaylists.isEmpty {
+        // 一次取用：`allPlaylists` 是 `playlists + smartPlaylists` 的拼接（每次访问都新建数组），
+        // 原实现在 body 里读了 7 次，其中一次还在 ForEach 内部逐行读 —— 整体 O(P²)
+        let all = playlistStore.allPlaylists
+        return Group {
+            if all.isEmpty {
                 EmptyState(
                     systemImage: "music.note.list",
                     title: "还没有播放列表",
@@ -337,14 +345,15 @@ struct PlaylistGrid: View {
                     alignment: .leading,
                     spacing: sizeClass.gridSpacing.v
                 ) {
-                    ForEach(Array(playlistStore.allPlaylists.enumerated()), id: \.element.id) { index, playlist in
-                        PlaylistCard(playlist: playlist, width: 320) { onOpenPlaylist(playlist) }
+                    ForEach(all.indices, id: \.self) { index in
+                        PlaylistCard(playlist: all[index], width: 320) { onOpenPlaylist(all[index]) }
                             .staggerAppear(index: index, visible: appeared)
                     }
                 }
             } else {
-                VStack(spacing: 0) {
-                    ForEach(Array(playlistStore.allPlaylists.enumerated()), id: \.element.id) { index, playlist in
+                LazyVStack(spacing: 0) {
+                    ForEach(all.indices, id: \.self) { index in
+                        let playlist = all[index]
                         LibraryListRow(
                             title: playlist.name,
                             subtitle: playlist.isSmart ? "智能播放列表" : "\(playlist.trackIds.count) 首曲目",
@@ -354,7 +363,7 @@ struct PlaylistGrid: View {
                             metrics: metrics,
                             onTap: { onOpenPlaylist(playlist) }
                         )
-                        if index < playlistStore.allPlaylists.count - 1 {
+                        if index < all.count - 1 {
                             RowDivider()
                         }
                     }

@@ -32,7 +32,7 @@ struct MiniPlayerBar: View {
                     Spacer(minLength: 0)
 
                     if layout.showsVolume {
-                        volumeCluster
+                        VolumeCluster(isQueueVisible: isQueueVisible, onToggleQueue: onToggleQueue)
                     } else {
                         queueButton
                     }
@@ -180,23 +180,6 @@ struct MiniPlayerBar: View {
 
     // MARK: - 右区：静音 + 音量 + 队列
 
-    private var volumeCluster: some View {
-        HStack(spacing: Theme.Spacing.lg) {
-            PlainIconButton(
-                systemName: volumeIcon,
-                label: music.volume > 0 ? "静音" : "恢复音量",
-                size: Theme.Size.iconButtonSm,
-                action: { music.volume = music.volume > 0 ? 0 : 0.7 }
-            )
-
-            VolumeSlider(volume: $music.volume)
-                .frame(minWidth: 60, maxWidth: 96)
-
-            queueButton
-        }
-        .frame(maxWidth: 220, alignment: .trailing)
-    }
-
     private var queueButton: some View {
         PlainIconButton(
             systemName: "list.bullet",
@@ -207,14 +190,7 @@ struct MiniPlayerBar: View {
         )
     }
 
-    private var volumeIcon: String {
-        if music.volume <= 0 { return "speaker.slash.fill" }
-        if music.volume < 0.4 { return "speaker.wave.1.fill" }
-        return "speaker.wave.3.fill"
-    }
-
     // MARK: - 进度条（4pt 轨道，hover 6pt + 把手 10；可键盘 ±5s 微调）
-
     private var progressBar: some View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
@@ -330,5 +306,49 @@ struct VolumeSlider: View {
             @unknown default: break
             }
         }
+    }
+}
+
+// MARK: - 音量区（单独观察音量，隔离拖拽发布）
+
+/// 静音键 + 音量滑杆 + 队列按钮。
+///
+/// 为什么单独成视图：`PlaybackVolume.level` 在拖动时以拖动事件频率（60–120Hz）发布。
+/// 若由 `MiniPlayerBar` 直接观察，整条播放条每帧重建；更早的版本里 `volume` 还挂在
+/// `MusicPlayerModel` 上，于是**所有**观察播放器的页面（曲库整表、待播清单、专辑页）
+/// 都会跟着每帧重建。把观察收在这里之后，拖音量只重绘这几个控件。
+private struct VolumeCluster: View {
+    let isQueueVisible: Bool
+    let onToggleQueue: () -> Void
+
+    @ObservedObject private var volume = MusicPlayerModel.shared.volume
+
+    var body: some View {
+        HStack(spacing: Theme.Spacing.lg) {
+            PlainIconButton(
+                systemName: icon,
+                label: volume.level > 0 ? "静音" : "恢复音量",
+                size: Theme.Size.iconButtonSm,
+                action: { volume.level = volume.level > 0 ? 0 : 0.7 }
+            )
+
+            VolumeSlider(volume: $volume.level)
+                .frame(minWidth: 60, maxWidth: 96)
+
+            PlainIconButton(
+                systemName: "list.bullet",
+                label: "播放队列",
+                size: Theme.Size.iconButtonSm,
+                isOn: isQueueVisible,
+                action: onToggleQueue
+            )
+        }
+        .frame(maxWidth: 220, alignment: .trailing)
+    }
+
+    private var icon: String {
+        if volume.level <= 0 { return "speaker.slash.fill" }
+        if volume.level < 0.4 { return "speaker.wave.1.fill" }
+        return "speaker.wave.3.fill"
     }
 }

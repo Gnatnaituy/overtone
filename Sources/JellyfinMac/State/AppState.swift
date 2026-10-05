@@ -46,7 +46,8 @@ final class AppState: ObservableObject {
         // 保存凭据：下次启动自动登录（Keychain 为主，UserDefaults 兜底）
         defaults.set(username, forKey: Keys.username)
         defaults.set(password, forKey: Keys.password)
-        _ = KeychainHelper.save(password: password, account: username)
+        // 钥匙串写入是同步 XPC（1–10ms）：放到后台，不挡住登录后的界面切换
+        await KeychainHelper.saveAsync(password: password, account: username)
         user = response.user
         phase = .signedIn
     }
@@ -74,7 +75,9 @@ final class AppState: ObservableObject {
         // 2. 账号密码自动登录
         if let username = defaults.string(forKey: Keys.username),
            let server = defaults.string(forKey: Keys.serverURL) {
-            let password = KeychainHelper.read(account: username) ?? defaults.string(forKey: Keys.password)
+            // 钥匙串读取是同步 XPC：这是启动路径，必须挪出主线程（首帧之前）
+            let stored = await KeychainHelper.readAsync(account: username)
+            let password = stored ?? defaults.string(forKey: Keys.password)
             if let password {
                 do {
                     try await login(server: server, username: username, password: password)
@@ -118,13 +121,15 @@ final class AppState: ObservableObject {
         APIClient.shared.reset()
         user = nil
         libraries = []
-        if let username = defaults.string(forKey: Keys.username) {
-            KeychainHelper.delete(account: username)
-        }
+        let account = defaults.string(forKey: Keys.username)
         defaults.removeObject(forKey: Keys.serverURL)
         defaults.removeObject(forKey: Keys.token)
         defaults.removeObject(forKey: Keys.username)
         defaults.removeObject(forKey: Keys.password)
         phase = .signedOut
+        // 钥匙串删除也是同步 XPC：先切到登录页，再在后台清理凭据
+        if let account {
+            Task { await KeychainHelper.deleteAsync(account: account) }
+        }
     }
 }

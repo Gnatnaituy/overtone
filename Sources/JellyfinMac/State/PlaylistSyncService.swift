@@ -40,13 +40,19 @@ final class PlaylistSyncService: ObservableObject {
             )
 
             // 2. 服务器 → 本地（合并/导入，服务器为权威；智能列表镜像副本除外）
+            // 先建一次 serverId → 本地列表 索引：循环里每次读 `store.allPlaylists`
+            // 都要重新拼一遍数组（O(K)），整体是 O(K²)
+            var localByServerId: [String: Playlist] = [:]
+            for local in store.allPlaylists {
+                if let sid = local.serverId { localByServerId[sid] = local }
+            }
             for item in result.items ?? [] {
                 let items = try await fetchItems(playlistId: item.id, userId: userId)
                 let trackIds = items.map { $0.id }
                 let itemMap = Dictionary(uniqueKeysWithValues: items.compactMap { track in
                     track.playlistItemId.map { (track.id, $0) }
                 })
-                if let local = store.allPlaylists.first(where: { $0.serverId == item.id }) {
+                if let local = localByServerId[item.id] {
                     // 智能列表的服务器副本：内容由本地动态生成，不反向覆盖
                     if local.isSmart { continue }
                     store.updateFromServer(
@@ -136,10 +142,11 @@ final class PlaylistSyncService: ObservableObject {
         )
     }
 
-    func pushRemove(playlist: Playlist, trackId: String) async throws {
-        guard let serverId = playlist.serverId else { return }
+    /// 移除条目。`knownEntryId` 由调用方在清理本地映射**之前**取出 ——
+    /// 没有它就只能退化成拉取整个播放列表条目再查找（每次移除一次全量 GET）。
+    func pushRemove(serverId: String, trackId: String, knownEntryId: String? = nil) async throws {
         let userId = try requireUserId()
-        var entryId = playlist.itemMap?[trackId]
+        var entryId = knownEntryId
         if entryId == nil {
             entryId = try await fetchEntryId(playlistId: serverId, userId: userId, trackId: trackId)
         }

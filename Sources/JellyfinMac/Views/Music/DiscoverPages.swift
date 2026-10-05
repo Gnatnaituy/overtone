@@ -72,13 +72,16 @@ struct TrackListPage: View {
                         emptyState
                     } else {
                         LazyVStack(spacing: 0) {
-                            ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
+                            // indices + 下标：`Array(tracks.enumerated())` 每次渲染都要物化
+                            // 一份 (offset, BaseItemDto) 元组数组（收藏/最近/最常可能是整库，
+                            // 单次约 1ms）。本表只渲染，位置即身份。
+                            ForEach(tracks.indices, id: \.self) { index in
                                 MusicRow(
-                                    track: track,
+                                    track: tracks[index],
                                     index: index,
                                     metrics: metrics,
-                                    isCurrent: music.currentTrack?.id == track.id,
-                                    isPlaying: music.isPlaying && music.currentTrack?.id == track.id,
+                                    isCurrent: music.currentTrack?.id == tracks[index].id,
+                                    isPlaying: music.isPlaying && music.currentTrack?.id == tracks[index].id,
                                     onTap: { MusicPlayerModel.shared.play(tracks: tracks, startAt: index) }
                                 )
                                 .staggerAppear(index: index, visible: appeared)

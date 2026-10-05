@@ -14,7 +14,11 @@ final class ImageCache {
 
     func image(for url: URL) async -> NSImage? {
         let key = url.absoluteString
-        if let image = cache[key] { return image }
+        if let image = cache[key] {
+            // 命中即刷新 LRU 位置
+            touch(key)
+            return image
+        }
 
         let data: Data?
         if let task = tasks[key] {
@@ -28,19 +32,45 @@ final class ImageCache {
             data = await task.value
             tasks[key] = nil
         }
+        // 并发去重只覆盖下载：两个调用方等的是同一个下载任务，但都会走到这里各自解码。
+        // 先复查一次缓存，避免同一张图被解码成两个 NSImage 并写入两次
+        // （同一 URL 的调用方在「正在播放」页同时出现：大封面 + 封面取色）。
+        if let image = cache[key] {
+            touch(key)
+            return image
+        }
         guard let data, let image = NSImage(data: data) else { return nil }
         store(image: image, key: key)
         return image
     }
 
+    /// 命中缓存时把键移到队尾（LRU 新鲜度）
+    private func touch(_ key: String) {
+        guard let existing = order.firstIndex(of: key), existing != order.count - 1 else { return }
+        order.remove(at: existing)
+        order.append(key)
+    }
+
     private func store(image: NSImage, key: String) {
+        // LRU：命中过的键移到队尾，淘汰的永远是最久没用到的封面。
+        //
+        // 原来是纯插入序（FIFO）：一个 1000 首的列表滚过去之后，**屏幕上还在显示**的
+        // 封面会因为"插入得早"被淘汰，滚回来又要重新下载 + 解码。
+        // 同时这里先移除同键旧位置，避免并发调用方重复入队导致 order 与 cache 失配
+        // （失配时淘汰会删错键，缓存条目数虚高）。
+        if cache[key] != nil, let existing = order.firstIndex(of: key) {
+            order.remove(at: existing)
+        }
         cache[key] = image
         order.append(key)
-        if order.count > 400 {
+        while order.count > Self.capacity {
             let oldest = order.removeFirst()
             cache.removeValue(forKey: oldest)
         }
     }
+
+    /// 内存中保留的封面数量上限
+    private static let capacity = 400
 
     /// 清空内存缓存（设置页「清除缓存」）
     func removeAll() {
@@ -767,13 +797,17 @@ struct TrackTableRows: View {
     @ObservedObject private var music = MusicPlayerModel.shared
 
     var body: some View {
-        ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
+        // 用 indices + 下标，而不是 `Array(tracks.enumerated())`：
+        // 后者每次渲染都要物化一个 (offset, BaseItemDto) 元组数组 —— BaseItemDto 约 272 字节，
+        // 整库（数千首）就是每次渲染 1MB 级别的 memcpy 加逐元素 ARC 保留/释放（实测 1 万条约 1ms）。
+        // 这里的 ForEach 只用于渲染行，位置即身份，不依赖稳定 id 做增删动画。
+        ForEach(tracks.indices, id: \.self) { index in
             TrackTableRow(
-                track: track,
+                track: tracks[index],
                 index: index,
                 sizeClass: sizeClass,
-                isCurrent: music.currentTrack?.id == track.id,
-                isPlaying: music.isPlaying && music.currentTrack?.id == track.id,
+                isCurrent: music.currentTrack?.id == tracks[index].id,
+                isPlaying: music.isPlaying && music.currentTrack?.id == tracks[index].id,
                 showArtist: showsArtist,
                 onTap: { onTap(index) }
             )
@@ -919,24 +953,38 @@ struct PlaylistCard: View {
     let onTap: () -> Void
 
     @ObservedObject private var store = MusicDataStore.shared
+    /// 播放列表自身的变化（增删 / 排序 / 重命名）也走 `revision`，用它做封面缓存失效
+    @ObservedObject private var playlistStore = PlaylistStore.shared
     @State private var hovered = false
-    /// 智能列表封面缓存：曲目数据变化时重算，避免每次渲染都全量过滤匹配
-    @State private var smartCoverTracks: [BaseItemDto] = []
+    /// 封面拼图的 4 首曲目缓存：数据变化时重算一次
+    @State private var coverTracks: [BaseItemDto] = []
     @Environment(\.appReduceMotion) private var reduceMotion
     @FocusState private var focused: Bool
 
-    private var coverTracks: [BaseItemDto] {
-        if playlist.isSmart { return smartCoverTracks }
-        return Array(playlist.trackIds.compactMap { store.track(id: $0) }.prefix(4))
-    }
-
-    /// 智能列表与手动列表一致：取匹配结果前 4 首的封面拼图
-    private func recomputeSmartCover() {
-        guard playlist.isSmart, let keyword = playlist.smartRule?.artistKeyword else {
-            smartCoverTracks = []
+    /// 智能列表与手动列表一致：取匹配结果前 4 首的封面拼图。
+    ///
+    /// 这里必须缓存：`coverTracks` 在一次 body 里会被读 5 次（1 次判空 + 4 张缩略图），
+    /// 若做成计算属性，每次都要把整个 `trackIds`（可能上千条）过一遍字典查找 ——
+    /// 单次渲染 5×N 次查找，而卡片会因悬停、曲库发布、播放列表同步反复重渲染。
+    private func recomputeCoverTracks() {
+        if playlist.isSmart {
+            guard let keyword = playlist.smartRule?.artistKeyword else {
+                coverTracks = []
+                return
+            }
+            coverTracks = Array(store.smartTracks(keyword: keyword).prefix(4))
             return
         }
-        smartCoverTracks = Array(store.smartTracks(keyword: keyword).prefix(4))
+        // 取满 4 首即停：与「全量 compactMap 后 prefix(4)」结果一致，
+        // 但命中时只做 4 次查找（曲目 id 失效时会继续往后找，语义不变）
+        var picked: [BaseItemDto] = []
+        picked.reserveCapacity(4)
+        for id in playlist.trackIds {
+            guard let track = store.track(id: id) else { continue }
+            picked.append(track)
+            if picked.count == 4 { break }
+        }
+        coverTracks = picked
     }
 
     var body: some View {
@@ -979,8 +1027,12 @@ struct PlaylistCard: View {
         .offset(y: Theme.lift(hovered, reduceMotion: reduceMotion))
         .animation(Theme.Motion.spring, value: hovered)
         .onHover { hovered = $0 }
-        .task { recomputeSmartCover() }
-        .onChange(of: store.tracks) { _ in recomputeSmartCover() }
+        .task { recomputeCoverTracks() }
+        // 都是 O(1) 变更检测：`onChange(of: store.tracks)` 每次 body 更新都要比较整个曲库。
+        // 播放列表侧用 revision 而不是 trackIds.count —— 后者漏掉「重排顺序」
+        // （前 4 首会变，但数量不变，封面就停在旧数据上了）
+        .onChange(of: store.dataRevision) { _ in recomputeCoverTracks() }
+        .onChange(of: playlistStore.revision) { _ in recomputeCoverTracks() }
         .help(playlist.name)
     }
 
