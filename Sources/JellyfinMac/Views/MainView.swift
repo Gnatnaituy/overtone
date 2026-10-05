@@ -199,8 +199,7 @@ struct MainView: View {
                             drawerOpen = true
                         }
                     },
-                    onOpenSettings: openSettings,
-                    onLogout: { appState.logout() }
+                    onOpenSettings: openSettings
                 )
                 .frame(width: Theme.Size.railWidth)
             } else {
@@ -212,8 +211,7 @@ struct MainView: View {
                     onSelect: handleSidebarSelect,
                     onCollapse: { railOverride = true },
                     onExpand: nil,
-                    onOpenSettings: openSettings,
-                    onLogout: { appState.logout() }
+                    onOpenSettings: openSettings
                 )
                 .frame(width: sidebarWidth)
             }
@@ -261,8 +259,7 @@ struct MainView: View {
                     onOpenSettings: {
                         drawerOpen = false
                         openSettings()
-                    },
-                    onLogout: { appState.logout() }
+                    }
                 )
                 .frame(width: Theme.Size.sidebarWidth)
                 .glassPanel(.thick, cornerRadius: Theme.Size.panelRadius, elevation: .e3)
@@ -581,7 +578,6 @@ private struct SidebarPanel: View {
     var onCollapse: (() -> Void)?
     var onExpand: (() -> Void)?
     let onOpenSettings: () -> Void
-    let onLogout: () -> Void
 
     @ObservedObject private var playlistStore = PlaylistStore.shared
     @State private var playlistGroupExpanded = false
@@ -712,8 +708,8 @@ private struct SidebarPanel: View {
 
             Spacer(minLength: 0)
 
+            // 退出登录不在侧栏给入口，只留在「设置 → 服务器与账号」
             railRow(icon: "slider.horizontal.3", title: "设置", action: onOpenSettings)
-            railRow(icon: "rectangle.portrait.and.arrow.right", title: "退出登录", action: onLogout)
         }
         .padding(.horizontal, Theme.Spacing.sm)
         .padding(.bottom, Theme.Spacing.lg)
@@ -745,8 +741,10 @@ private struct SidebarPanel: View {
         SidebarNavRow(icon: icon, title: title, isSelected: false, style: .rail, action: action)
     }
 
-    // MARK: 账号菜单
+    // MARK: 账号信息
 
+    /// 底部只放「设置」一级入口 + 账号只读信息。
+    /// 账号行不再挂弹出菜单：退出登录只走「设置 → 服务器与账号」。
     private var accountFooter: some View {
         VStack(spacing: 2) {
             // 设置（⌘,）：一级入口，不藏在账号菜单里
@@ -771,34 +769,11 @@ private struct SidebarPanel: View {
                 }
 
                 Spacer(minLength: 0)
-
-                Menu {
-                    Button {
-                        onOpenSettings()
-                    } label: {
-                        Label("设置…", systemImage: "gearshape")
-                    }
-                    Divider()
-                    Button(role: .destructive) {
-                        onLogout()
-                    } label: {
-                        Label("退出登录", systemImage: "rectangle.portrait.and.arrow.right")
-                    }
-                } label: {
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Theme.textTertiary)
-                        .frame(width: Theme.Size.iconButtonSm, height: Theme.Size.iconButtonSm)
-                        .contentShape(Rectangle())
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .help("账号与设置")
-                .accessibilityLabel("账号与设置")
             }
             .padding(.horizontal, 8)
             .frame(height: 40)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("当前账号 \(userName)，服务器 \(serverHost)")
         }
         .padding(.horizontal, Theme.Spacing.lg)
         .padding(.bottom, Theme.Spacing.lg)
