@@ -8,6 +8,7 @@ import SwiftUI
 /// 颜色 / 圆角 / 字号一律走 `Theme` 令牌；深色下由 `elevation(.e1, cornerRadius:)` 自动换成描边分层。
 struct SettingsView: View {
     @EnvironmentObject private var appState: AppState
+    @Environment(\.appVisualStyle) private var visualStyle
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var store = MusicDataStore.shared
 
@@ -66,6 +67,13 @@ struct SettingsView: View {
             .scrollIndicators(.hidden)
             .background(ScrollBarHider())
         }
+        // 风格切换必须重建内容：纸墨下圆角 14→4、玻璃材质→实底纸面、行间多出 hairline，
+        // 都是**结构 / 布局**差异；只换色不会让已经布局过的子树重算，
+        // 残留的旧尺寸会表现为「切了风格但卡片大小没变」。挂 id 等于换一个视图。
+        //
+        // 注意 id 只包 HStack（内容），`group` / 滚动位置等 @State 挂在 SettingsView 上，
+        // 所以切换风格不会把用户踢回「通用」分组。
+        .id(visualStyle)
         // macOS 标准设置窗口：固定 720×560（§4.5）
         .frame(width: 720, height: 560)
         .background(Theme.canvas)
@@ -179,6 +187,18 @@ struct SettingsView: View {
 
     private var appearanceGroup: some View {
         SettingsGroupCard(title: "外观") {
+            // v3/v4 双轨总开关 —— 放在第一行，因为下面每一项的形态都由它决定
+            SettingsRow(label: "视觉风格", detail: settings.visualStyle.detail) {
+                SegmentedControl(
+                    segments: VisualStyle.allCases.map { .init($0.rawValue, $0.title) },
+                    selection: Binding(
+                        get: { settings.visualStyle.rawValue },
+                        set: { settings.visualStyle = VisualStyle(rawValue: $0) ?? .glass }
+                    )
+                )
+                .fixedSize(horizontal: true, vertical: false)
+                .accessibilityLabel("视觉风格")
+            }
             SettingsRow(label: "主题", detail: "浅色 / 深色 / 跟随系统") {
                 SegmentedControl(
                     segments: AppSettings.ThemeChoice.allCases.map { .init($0.rawValue, $0.rawValue) },
@@ -579,7 +599,7 @@ private struct SettingsNavRow: View {
     }
 }
 
-// MARK: - 设置分组卡片（surface 实底 + radius-lg + e1；组标题 13/600 textSecondary）
+// MARK: - 设置分组卡片（glass：surface 实底 + radius-lg + e1；paper：纸面 + 规则标签 + hairline）
 
 private struct SettingsGroupCard<Content: View>: View {
     let title: String
@@ -587,13 +607,7 @@ private struct SettingsGroupCard<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(title)
-                .textStyle(.bodySM, weight: .semibold, color: Theme.textSecondary)
-                .padding(.horizontal, Theme.Spacing.xl)
-                .padding(.top, Theme.Spacing.lg)
-                .padding(.bottom, Theme.Spacing.xxs)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityAddTraits(.isHeader)
+            header
 
             content
         }
@@ -602,8 +616,32 @@ private struct SettingsGroupCard<Content: View>: View {
                 .fill(Theme.surface)
         )
         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.lg))
-        // 深色下 e1 自动换成 borderSubtle 描边（§4.4）
+        // 深色下 e1 自动换成 borderSubtle 描边（§4.4）；纸墨下 `elevation` 不出投影，
+        // 层次改由 hairline 与纸墨反差承担
         .elevation(.e1, cornerRadius: Theme.Radius.lg)
+    }
+
+    /// 组标题：玻璃是「13/600 次级色」；纸墨改用**规则标签**（─── 标题 ───）。
+    ///
+    /// 为什么纸墨要换形态：v4 §4.7 的区块标签是印刷目录的形态，一条横贯的细线同时
+    /// 承担「分组开始」与「与上一组分开」两个职责 —— 纸面上没有卡片阴影可用。
+    /// 直接复用 T2 的 `RuleLabel`（形态由组件库统一负责，这里只给标题）。
+    @ViewBuilder
+    private var header: some View {
+        if Theme.isPaper {
+            RuleLabel(title)
+                .padding(.horizontal, Theme.Spacing.xl)
+                .padding(.top, Theme.Spacing.xl)
+                .padding(.bottom, Theme.Spacing.md)
+        } else {
+            Text(title)
+                .textStyle(.bodySM, weight: .semibold, color: Theme.textSecondary)
+                .padding(.horizontal, Theme.Spacing.xl)
+                .padding(.top, Theme.Spacing.lg)
+                .padding(.bottom, Theme.Spacing.xxs)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityAddTraits(.isHeader)
+        }
     }
 }
 
@@ -634,6 +672,19 @@ private struct SettingsRow<Control: View>: View {
         .padding(.horizontal, Theme.Spacing.xl)
         .padding(.vertical, Theme.Spacing.sm)
         .frame(minHeight: 44)
+        // 纸墨：行间 1px hairline（v4 §2.3「描边是主要分隔手段，不用斑马纹」）。
+        //
+        // 为什么画在行自己的顶部而不是数「第几行」：行的数量与排列由各分组自己决定，
+        // 卡片这一层看不到子行（`Content` 泛型不可枚举），逐行画线是唯一不引入
+        // AnyView / 变长遍历的写法。副作用是组标题下与整组底部各多出一条细线，
+        // 观感上等于「表头下划线 + 表格外框」，与 v4 的印刷表格一致。
+        .overlay(alignment: .top) {
+            if Theme.isPaper {
+                Rectangle()
+                    .fill(Theme.Paper.hairline)
+                    .frame(height: 1)
+            }
+        }
     }
 }
 
@@ -644,20 +695,25 @@ extension SettingsRow where Control == EmptyView {
     }
 }
 
-// MARK: - 开关（§4.5：开关 36×20，开 = brand500；命中区 44）
+// MARK: - 开关（glass §4.5：开关 36×20，开 = brand500；paper §4.2：32×18 方形开关）
 
 private struct SettingsSwitch: View {
     @Binding var isOn: Bool
     let label: String
 
     var body: some View {
-        Toggle("", isOn: $isOn)
-            .labelsHidden()
-            .toggleStyle(.switch)
-            .tint(Theme.brand500)
-            .controlSize(.small)
-            .hitExpand(from: 20, to: 44)
-            .accessibilityLabel(label)
+        if Theme.isPaper {
+            // 纸墨：方形开关（v4 §4.2，直角轨道 + 方钮），胶囊只留给快速入口
+            PaperSwitch(isOn: $isOn, label: label)
+        } else {
+            Toggle("", isOn: $isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .tint(Theme.brand500)
+                .controlSize(.small)
+                .hitExpand(from: 20, to: 44)
+                .accessibilityLabel(label)
+        }
     }
 }
 
@@ -762,14 +818,8 @@ private struct AccentSwatch: View {
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 
-    /// 固定色值：不随当前强调色变化
-    private var color: Color {
-        switch choice {
-        case .indigo: return Theme.accentIndigo
-        case .teal: return Theme.accentTeal
-        case .purple: return Theme.accentPurple
-        }
-    }
+    /// 固定色值：不随当前强调色变化（直接走 `AccentChoice.color`，保证与色阶定义同一处）
+    private var color: Color { choice.color }
 
     private var ring: Color {
         if isSelected { return Theme.brandText }

@@ -29,7 +29,42 @@ struct QueuePanelView: View {
         .glassPanel(.thick, cornerRadius: Theme.Size.panelRadius, elevation: .e3)
     }
 
+    @ViewBuilder
     private var header: some View {
+        if Theme.isPaper {
+            // paper（§6.6）：规则标签形态 ──── 播放队列 ──── 右侧「清空」跟在细线后
+            RuleLabel("播放队列") {
+                HStack(spacing: Theme.Spacing.sm) {
+                    Text("\(music.queue.count) 首")
+                        .textStyle(.monoSM, color: Theme.Paper.ink3)
+                    clearButton
+                    PlainIconButton(systemName: "xmark", label: "关闭队列", action: onClose)
+                }
+            }
+            .padding(.horizontal, Theme.Spacing.lg)
+            .frame(height: 52)
+            .accessibilityAddTraits(.isHeader)
+        } else {
+            glassHeader
+        }
+    }
+
+    /// paper：清空队列。队列为空时不渲染 —— 没有可清的东西，按钮只会是噪声
+    @ViewBuilder
+    private var clearButton: some View {
+        if !music.queue.isEmpty {
+            Button("清空") {
+                music.clearQueue()
+                ToastCenter.shared.show("已清空队列", systemImage: "trash")
+            }
+            .buttonStyle(GhostButtonStyle(compact: true))
+            .help("清空播放队列")
+            .accessibilityLabel("清空播放队列")
+        }
+    }
+
+    /// glass（v3）形态：与改动前逐字一致
+    private var glassHeader: some View {
         HStack(spacing: Theme.Spacing.md) {
             Text("播放队列")
                 .textStyle(.bodySM, weight: .semibold, color: Theme.textPrimary)
@@ -68,7 +103,8 @@ struct QueuePanelView: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
-        .environment(\.defaultMinListRowHeight, 52)
+        // paper 点线行 48（§4.4「行高 48（队列）」）
+        .environment(\.defaultMinListRowHeight, Theme.isPaper ? PaperRowMetrics.listRowHeight : 52)
         .padding(.horizontal, Theme.Spacing.xs)
     }
 }

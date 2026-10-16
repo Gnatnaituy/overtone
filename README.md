@@ -27,6 +27,7 @@
 - **详情页**：专辑 / 艺人 / 播放列表统一骨架 —— 面包屑返回栏 + 大封面头部 + 曲目表
 - **搜索**：搜索框常驻内容区顶栏（⌘F 聚焦），结果按歌曲 / 专辑 / 艺人 / 播放列表分组
 - **设置页**：通用 / 播放 / 外观 / 媒体库 / 服务器与账号 / 关于 六个分组（⌘, 打开）
+- **视觉风格双轨**：外观里可切「玻璃 Liquid Glass」（v3，默认）/「纸墨 Tape & Signal」（v4）——即时生效、重启保持；两套风格共用同一份信息架构与五档断点，切风格不丢导航与搜索词
 - **播放器**：原生 AVPlayer，全局迷你播放条（三区布局，窄窗降级两区），正在播放页（大封面 + 5 键控制 + 待播清单 + 歌词 + 睡眠定时）
 - **进度同步 / 直连优先**：播放进度按设置的间隔上报服务器；默认直接播放原始文件，关闭直连或选非原始音质时自动走服务器转码
 - **窄窗口五档**：侧栏在窄窗口降级为 64pt 图标栏（W1 可展开 240pt 抽屉），不丢导航；完整侧栏也可用 logo 行的按钮手动收成图标栏
@@ -76,20 +77,23 @@ Sources/JellyfinMac/
 ```
 
 设计令牌全部收敛在 `Sources/JellyfinMac/Theme.swift`，页面里不出现硬编码色值与圆角；字号统一走
-`.textStyle(_:)`，随系统文本大小缩放。可访问性：图标按钮均有 `accessibilityLabel`，hover 控件在键盘
-聚焦时同样出现，进度条可键盘 ±5s 微调，尊重系统「减少动态效果」。
+`.textStyle(_:)`，随系统文本大小缩放。令牌分两套「视觉风格」同时构造、切换只换引用
+（`VisualStyle.glass` / `.paper`，页面侧一律写 `Theme.isPaper ? 纸墨 : 原玻璃代码`），
+所以两套皮肤共享同一份视图与断点，玻璃模式的取值与 v3 逐字节一致。可访问性：图标按钮均有
+`accessibilityLabel`，hover 控件在键盘聚焦时同样出现，进度条可键盘 ±5s 微调，尊重系统「减少动态效果」。
 
 ## 已知限制
 
 - 播放器暂不支持字幕 / 音轨切换（跟随服务器默认轨道）
 - 仅支持单个服务器
-- 深色主题尚未落地（令牌层已预留，视觉稿只交付浅色）
+- 纸墨风格的侧栏是「悬浮纸面板」（四边细线），不是 v4 预览里的贴边 + 1px 右细线 —— 改贴边要同时动断点宽度计算与红黄绿三键定位
+- 切换视觉风格会重建窗口呈现层：滚动位置等瞬态状态复位，导航栈 / 搜索词 / 侧栏宽度保留
 - 交叉淡入当前作用于换曲淡入 / 暂停淡出，不是双播放器真交叉淡化
 - 播放列表曲目排序提供「上移 / 下移」（拖拽排序的键盘等价物），暂无拖拽把手
 
 ## 更多文档
 
-- [界面设计规范 v3](docs/ui-design/UI-Redesign-v3.md) · [高保真预览](docs/ui-design/UI-Redesign-v3-preview.html)（双主题 + 材质开关）；早期 [v2 规范](docs/ui-design/UI-Design-Spec.md) · [v2 预览](docs/ui-design/preview.html)
+- [界面设计规范 v4「纸带与信号」](docs/ui-design/UI-Redesign-v4.md) · [高保真预览](docs/ui-design/UI-Redesign-v4-preview.html)（Editorial 印刷风 · 双主题 + 强调色/宽窄窗切换）；[界面设计规范 v3](docs/ui-design/UI-Redesign-v3.md) · [高保真预览](docs/ui-design/UI-Redesign-v3-preview.html)（双主题 + 材质开关）；早期 [v2 规范](docs/ui-design/UI-Design-Spec.md) · [v2 预览](docs/ui-design/preview.html)
 - [构建笔记](docs/build-notes.md)：外观为什么取决于 SDK 版本、没有 Xcode 时的宏插件兜底、自动打包
 - [应用图标](docs/app-icon.md)：主图规范与换图标流程
 - [命名与内部标识](docs/naming.md)：产品名与 target / Bundle ID / 数据目录的解耦

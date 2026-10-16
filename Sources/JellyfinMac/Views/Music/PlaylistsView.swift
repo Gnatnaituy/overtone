@@ -94,33 +94,67 @@ struct PlaylistsView: View {
         } else {
             VStack(alignment: .leading, spacing: Theme.Spacing.section) {
                 section(
-                    title: "我创建的",
+                    // §6.5：paper 的规则标签用「我的列表」；glass 文案一字不改
+                    title: Theme.isPaper ? "我的列表" : "我创建的",
                     playlists: playlistStore.playlists,
                     emptyHint: "还没有手动创建的播放列表"
                 ) {
-                    Button {
-                        startCreatePlaylist()
-                    } label: {
-                        Label("新建播放列表", systemImage: "plus")
-                    }
-                    .buttonStyle(SecondaryButtonStyle(compact: true))
-                    .help("新建播放列表")
+                    newPlaylistAction
                 }
 
                 section(
-                    title: "智能列表",
+                    title: Theme.isPaper ? "智能列表 · 按艺人关键字自动收集" : "智能列表",
                     playlists: playlistStore.smartPlaylists,
                     emptyHint: "还没有智能列表，按艺人关键字自动收集曲目"
                 ) {
-                    Button {
-                        startCreateSmart()
-                    } label: {
-                        Label("新建智能列表", systemImage: "sparkles")
-                    }
-                    .buttonStyle(SecondaryButtonStyle(compact: true))
-                    .help("新建智能列表")
+                    newSmartAction
                 }
             }
+        }
+    }
+
+    /// 区块操作（§6.5）：「＋ 新建」在 paper 下是幽灵按钮（无底无框），glass 保持次级按钮
+    @ViewBuilder
+    private var newPlaylistAction: some View {
+        if Theme.isPaper {
+            Button {
+                startCreatePlaylist()
+            } label: {
+                Label("新建", systemImage: "plus")
+            }
+            .buttonStyle(GhostButtonStyle(compact: true))
+            .help("新建播放列表")
+            .accessibilityLabel("新建播放列表")
+        } else {
+            Button {
+                startCreatePlaylist()
+            } label: {
+                Label("新建播放列表", systemImage: "plus")
+            }
+            .buttonStyle(SecondaryButtonStyle(compact: true))
+            .help("新建播放列表")
+        }
+    }
+
+    @ViewBuilder
+    private var newSmartAction: some View {
+        if Theme.isPaper {
+            Button {
+                startCreateSmart()
+            } label: {
+                Label("新建智能列表", systemImage: "sparkles")
+            }
+            .buttonStyle(GhostButtonStyle(compact: true))
+            .help("新建智能列表")
+            .accessibilityLabel("新建智能列表")
+        } else {
+            Button {
+                startCreateSmart()
+            } label: {
+                Label("新建智能列表", systemImage: "sparkles")
+            }
+            .buttonStyle(SecondaryButtonStyle(compact: true))
+            .help("新建智能列表")
         }
     }
 
@@ -161,24 +195,25 @@ struct PlaylistsView: View {
             } else {
                 // LazyVStack：列表模式下每行都会跑 `.task { recompute() }`（智能列表要全库匹配），
                 // 用非惰性 VStack 会让所有行在首帧同时开工
-                LazyVStack(spacing: 0) {
-                    ForEach(Array(playlists.enumerated()), id: \.element.id) { index, playlist in
-                        PlaylistRow(playlist: playlist) { onOpenPlaylist(playlist) }
-                        if index < playlists.count - 1 {
-                            Rectangle()
-                                .fill(Theme.borderSubtle)
-                                .frame(height: 1)
-                        }
-                    }
-                }
-                .background(
-                    RoundedRectangle(cornerRadius: Theme.Radius.lg)
-                        .fill(Theme.surface)
-                )
-                .elevation(.e1, cornerRadius: Theme.Radius.lg)
-                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.lg))
+                playlistRowList(playlists)
             }
         }
+    }
+
+    /// 行式列表：paper 的点线行自带 hairline 底边，直接落纸面；
+    /// glass 仍是「surface 卡 + 行间分隔线」的原有形态
+    private func playlistRowList(_ playlists: [Playlist]) -> some View {
+        LazyVStack(spacing: 0) {
+            ForEach(Array(playlists.enumerated()), id: \.element.id) { index, playlist in
+                PlaylistRow(playlist: playlist) { onOpenPlaylist(playlist) }
+                if !Theme.isPaper && index < playlists.count - 1 {
+                    Rectangle()
+                        .fill(Theme.borderSubtle)
+                        .frame(height: 1)
+                }
+            }
+        }
+        .modifier(PlaylistListChrome())
     }
 
     // MARK: - 动作
@@ -214,48 +249,172 @@ private struct PlaylistRow: View {
     }
 
     var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: Theme.Spacing.lg) {
-                PlaylistCoverMosaic(
-                    tracks: stats?.coverTracks ?? [],
-                    size: 52,
-                    cornerRadius: Theme.Radius.md,
-                    fallbackIcon: playlist.isSmart ? "sparkles" : "music.note.list"
-                )
-
-                VStack(alignment: .leading, spacing: Theme.Spacing.xxs) {
-                    HStack(spacing: Theme.Spacing.md) {
-                        Text(playlist.name)
-                            .textStyle(.body, weight: .semibold, color: Theme.textPrimary)
-                            .lineLimit(1)
-                        if playlist.isSmart { smartBadge }
+        Group {
+            if Theme.isPaper {
+                // paper：主体按钮与行尾 ghost 菜单**并列**而不是嵌套 ——
+                // Button 套 Button 在 macOS 上会让菜单点击被外层吞掉
+                HStack(spacing: 0) {
+                    Button(action: onTap) {
+                        paperLayout
                     }
-                    Text(subtitle)
-                        .textStyle(.footnote, color: Theme.textSecondary)
-                        .lineLimit(1)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                    .buttonStyle(.plain)
+                    .acceptClickThrough()
+                    .focused($focused)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityLabel(accessibilityLabel)
 
-                Text(durationText)
-                    .textStyle(.monoSM, color: Theme.textSecondary)
-                    .fixedSize()
+                    playlistMenu
+                }
+                .padding(.horizontal, Theme.Spacing.lg)
+                .frame(height: 60)
+                .background(hovered ? Theme.Paper.hover : Color.clear)
+                .overlay(alignment: .bottom) {
+                    Rectangle()
+                        .fill(Theme.Paper.hairline)
+                        .frame(height: 1)
+                }
+            } else {
+                Button(action: onTap) {
+                    glassLayout
+                }
+                .buttonStyle(.plain)
+                .acceptClickThrough()
+                .focused($focused)
+                .accessibilityLabel(accessibilityLabel)
             }
-            .padding(.horizontal, Theme.Spacing.xl)
-            .frame(height: 72)
-            .background(hovered ? Theme.surfaceHover : Color.clear)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .acceptClickThrough()
-        .focused($focused)
         .focusRing(focused, cornerRadius: Theme.Radius.sm)
         .onHover { hovered = $0 }
         .animation(Theme.Motion.micro, value: hovered)
         .help(playlist.name)
-        .accessibilityLabel(accessibilityLabel)
         .task { recompute() }
         // O(1) 变更检测：`onChange(of: store.tracks)` 每次 body 更新都要比较整个曲库
         .onChange(of: store.dataRevision) { _ in recompute() }
+    }
+
+    /// 点线行（§6.5）：封面 48 · 衬线名称 · ink2 副标 · 点线引导 · 状态点 + 条数/同步
+    private var paperLayout: some View {
+        HStack(spacing: Theme.Spacing.lg) {
+            PlaylistCoverMosaic(
+                tracks: stats?.coverTracks ?? [],
+                size: 48,
+                cornerRadius: Theme.Radius.cover,
+                fallbackIcon: playlist.isSmart ? "sparkles" : "music.note.list"
+            )
+
+            // 2026-10-14 用户裁决：不再画点线引导（「横线太多了」），改成等宽的弹性空白 ——
+            // 标题列与右侧「状态 + 元信息」列的位置完全不变，只是中间不再画点
+            HStack(spacing: Theme.Spacing.lg) {
+                VStack(alignment: .leading, spacing: Theme.Spacing.xxs) {
+                    Text(playlist.name)
+                        .paperSerifTitle(.bodyLG, color: Theme.Paper.ink)
+                        .lineLimit(1)
+                    Text(paperSubtitle)
+                        .textStyle(.footnote, color: Theme.Paper.ink2)
+                        .lineLimit(1)
+                }
+                .layoutPriority(1)
+                .help(playlist.name)
+
+                Spacer(minLength: 12)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(spacing: Theme.Spacing.sm) {
+                // 状态点：智能 = 泛音青（次级彩色，不与信号红抢），本地 = ink-3。
+                // 颜色不单独承载信息 —— 后面永远跟着文字
+                Rectangle()
+                    .fill(playlist.isSmart ? Theme.Paper.teal : Theme.Paper.ink3)
+                    .frame(width: 7, height: 7)
+                    .accessibilityHidden(true)
+                Text(paperMeta)
+                    .textStyle(.footnote, color: Theme.Paper.ink2)
+                    .lineLimit(1)
+            }
+            .layoutPriority(2)
+        }
+    }
+
+    /// 行操作（§6.5）：ghost 图标按钮 —— 无底无框、44pt 热区。
+    /// 删除走统一二次确认弹窗（与详情页一致），不做 hover-only 显隐，
+    /// 免得出现「看不见但能 Tab 到」的焦点陷阱
+    private var playlistMenu: some View {
+        TokenMenu(accessibilityLabel: "更多操作：\(playlist.name)", help: "更多操作") {
+            Button {
+                onTap()
+            } label: {
+                Label("打开", systemImage: "arrow.right")
+            }
+            Button(role: .destructive) {
+                DialogCenter.shared.confirm(
+                    title: "删除播放列表",
+                    message: "确定要删除「\(playlist.name)」吗？此操作不可撤销。",
+                    confirmTitle: "删除"
+                ) {
+                    PlaylistStore.shared.delete(playlist)
+                }
+            } label: {
+                Label("删除播放列表", systemImage: "trash")
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Theme.Paper.ink2)
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .hitExpand(from: 28, to: 44)
+        .padding(.leading, Theme.Spacing.sm)
+    }
+
+    /// paper 左列副标：列表类型（§6.5 第一列副标）
+    private var paperSubtitle: String {
+        guard playlist.isSmart else { return "本地列表" }
+        if let keyword = playlist.smartRule?.artistKeyword, !keyword.isEmpty {
+            return "智能列表 · 关键字「\(keyword)」"
+        }
+        return "智能列表 · 自动更新"
+    }
+
+    /// paper 右侧状态列：条数 + 同步状态（§6.5「24 首 · 已同步」）
+    private var paperMeta: String {
+        if playlist.isSmart {
+            return "\(stats?.count ?? 0) 首 · 自动"
+        }
+        return "\(playlist.trackIds.count) 首 · \(playlist.serverId == nil ? "本地" : "已同步")"
+    }
+
+    /// glass 行（原样保留：高 72、封面 52、智能 badge、右侧总时长）
+    private var glassLayout: some View {
+        HStack(spacing: Theme.Spacing.lg) {
+            PlaylistCoverMosaic(
+                tracks: stats?.coverTracks ?? [],
+                size: 52,
+                cornerRadius: Theme.Radius.md,
+                fallbackIcon: playlist.isSmart ? "sparkles" : "music.note.list"
+            )
+
+            VStack(alignment: .leading, spacing: Theme.Spacing.xxs) {
+                HStack(spacing: Theme.Spacing.md) {
+                    Text(playlist.name)
+                        .textStyle(.body, weight: .semibold, color: Theme.textPrimary)
+                        .lineLimit(1)
+                    if playlist.isSmart { smartBadge }
+                }
+                Text(subtitle)
+                    .textStyle(.footnote, color: Theme.textSecondary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text(durationText)
+                .textStyle(.monoSM, color: Theme.textSecondary)
+                .fixedSize()
+        }
+        .padding(.horizontal, Theme.Spacing.xl)
+        .frame(height: 72)
+        .background(hovered ? Theme.surfaceHover : Color.clear)
+        .contentShape(Rectangle())
     }
 
     /// 「智能」badge：`brandTint` 底 + `brandText` 字 + 11pt（§2.2 / 预览 `.badge`）
@@ -313,6 +472,23 @@ private struct PlaylistRow: View {
             duration: tracks.reduce(0) { $0 + $1.runtimeSeconds },
             coverTracks: Array(tracks.prefix(4))
         )
+    }
+}
+
+/// 行式列表容器：glass = surface 卡 + e1；paper = 不套卡（§6.5 点线行自带 hairline 底边）
+private struct PlaylistListChrome: ViewModifier {
+    func body(content: Content) -> some View {
+        if Theme.isPaper {
+            content
+        } else {
+            content
+                .background(
+                    RoundedRectangle(cornerRadius: Theme.Radius.lg)
+                        .fill(Theme.surface)
+                )
+                .elevation(.e1, cornerRadius: Theme.Radius.lg)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.lg))
+        }
     }
 }
 

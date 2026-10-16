@@ -238,6 +238,36 @@ final class MusicPlayerModel: ObservableObject {
         }
     }
 
+    /// 清空播放队列（队列面板的「清空」）。
+    ///
+    /// 只把 `queue` 置空是不够的：AVPlayer 还在放，控制中心里还挂着上一首的 Now Playing，
+    /// 进度也还在按间隔上报。这里照 `stopAtEnd()` 的收尾顺序做一次完整 teardown ——
+    /// 停播放与上报、复位进度、停掉睡眠/淡入定时器，最后清队列与索引
+    /// （`currentTrack` 因索引越界自然变 nil）。空队列是 no-op。
+    func clearQueue() {
+        guard !queue.isEmpty else { return }
+        player.pause()
+        player.replaceCurrentItem(with: nil)
+        // 旧 item 的播放结束通知也要摘掉：否则它迟到触发 handleEnded，
+        // 在空队列上再走一遍「下一曲」判定（loadCurrent 换曲时同样会摘）
+        if let endObserver {
+            NotificationCenter.default.removeObserver(endObserver)
+            self.endObserver = nil
+        }
+        isPlaying = false
+        isLoading = false
+        sleepTimer?.invalidate()
+        sleepTimer = nil
+        fadeTimer?.invalidate()
+        fadeTimer = nil
+        progress.position = 0
+        progress.duration = 0
+        stopReporting()
+        queue = []
+        currentIndex = -1
+        updateNowPlayingInfo()
+    }
+
     /// 插播到当前曲目之后
     func playNext(_ track: BaseItemDto) {
         if currentIndex < 0 || queue.isEmpty {

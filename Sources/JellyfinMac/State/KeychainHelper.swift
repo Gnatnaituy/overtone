@@ -1,9 +1,15 @@
 import Foundation
 import Security
 
-/// 钥匙串封装：保存/读取 Jellyfin 密码用于启动自动登录
+/// 钥匙串封装：保存/读取 Jellyfin 密码与访问 token，用于启动免登录
 enum KeychainHelper {
     private static let service = "com.jellyfin.mac-client"
+
+    /// 访问 token 的钥匙串账号。
+    ///
+    /// token 现在**不**存钥匙串（ad-hoc 签名每次重建都会让 ACL 失配、弹系统授权框，
+    /// 而 token 在启动路径上必须无感），这里保留常量只为登出时清掉历史遗留条目。
+    static let tokenAccount = "session-token"
 
     static func save(password: String, account: String) -> Bool {
         let data = Data(password.utf8)
@@ -53,9 +59,12 @@ extension KeychainHelper {
         await Task.detached(priority: .userInitiated) { read(account: account) }.value
     }
 
-    static func saveAsync(password: String, account: String) async {
+    /// 写钥匙串；返回是否成功。
+    /// 迁移逻辑要先确认写入成功，才敢把 UserDefaults 里的明文删掉（失败时保留兜底）。
+    @discardableResult
+    static func saveAsync(password: String, account: String) async -> Bool {
         await Task.detached(priority: .utility) {
-            _ = save(password: password, account: account)
+            save(password: password, account: account)
         }.value
     }
 

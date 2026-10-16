@@ -85,11 +85,12 @@ struct MusicAlbumView: View {
     @ViewBuilder
     private var header: some View {
         let coverSize = sizeClass.detailCoverSize
+        // 全部封面统一圆角（§7.2 规则 2）；paper 下换成印刷套封的 2px 圆角（§4.6）
+        let coverRadius: CGFloat = Theme.isPaper ? Theme.Radius.cover : Theme.Radius.md
         let cover = RemoteImage(url: current.artworkURL(width: 480), contentMode: .fill)
             .frame(width: coverSize, height: coverSize)
-            // 全部封面统一圆角 R=10（§7.2 规则 2）+ e2 阴影
-            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
-            .elevation(.e2, cornerRadius: Theme.Radius.md)
+            .clipShape(RoundedRectangle(cornerRadius: coverRadius))
+            .pagesCoverChrome(radius: coverRadius, level: .e2)
 
         if sizeClass.detailStacksVertically {
             VStack(alignment: .leading, spacing: Theme.Spacing.xxl) {
@@ -189,7 +190,7 @@ struct MusicAlbumView: View {
                 .font(.system(size: 16, weight: .medium))
                 .foregroundStyle(Theme.textSecondary)
                 .frame(width: Theme.Size.iconButtonLg, height: Theme.Size.iconButtonLg)
-                .glassControl(cornerRadius: Theme.Size.iconButtonLg / 2)
+                .modifier(AlbumMenuChrome())
                 .contentShape(Circle())
         }
     }
@@ -209,5 +210,16 @@ struct MusicAlbumView: View {
     private func playAll() {
         guard !vm.tracks.isEmpty else { return }
         MusicPlayerModel.shared.play(tracks: vm.tracks, startAt: 0)
+    }
+}
+
+/// 「更多操作」按钮外观：glass = 圆形玻璃控件；paper = 幽灵按钮（无底无框，§4.1）
+private struct AlbumMenuChrome: ViewModifier {
+    func body(content: Content) -> some View {
+        if Theme.isPaper {
+            content
+        } else {
+            content.glassControl(cornerRadius: Theme.Size.iconButtonLg / 2)
+        }
     }
 }

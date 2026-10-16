@@ -103,8 +103,14 @@ struct MusicSearchView: View {
                 message: "检查拼写，或清除筛选条件"
             ) {
                 if filter != "all" {
-                    Button("清除筛选") { filter = "all" }
-                        .buttonStyle(SecondaryButtonStyle(compact: true))
+                    if Theme.isPaper {
+                        // §6.7：无结果的引导是幽灵按钮（无底无框），不抢墨块主按钮
+                        Button("搜索全部") { filter = "all" }
+                            .buttonStyle(GhostButtonStyle(compact: true))
+                    } else {
+                        Button("清除筛选") { filter = "all" }
+                            .buttonStyle(SecondaryButtonStyle(compact: true))
+                    }
                 }
             }
         } else {
@@ -225,19 +231,34 @@ struct MusicSearchView: View {
         }
     }
 
+    @ViewBuilder
     private var albumSection: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
             SectionHeader(title: "专辑") {
                 countLabel(vm.albums.count)
             }
-            LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: sizeClass.gridMin, maximum: sizeClass.gridMax),
-                                   spacing: sizeClass.gridSpacing.h)],
-                alignment: .leading,
-                spacing: sizeClass.gridSpacing.v
-            ) {
-                ForEach(vm.albums) { album in
-                    PosterCard(item: album, width: 320, onTap: { onOpenAlbum(album) })
+            if Theme.isPaper {
+                // §6.7：专辑组用「封面横滑行」（单行不换行，滚轮横向浏览）
+                ScrollView(.horizontal) {
+                    HStack(spacing: Theme.Spacing.xl) {
+                        ForEach(vm.albums) { album in
+                            PosterCard(item: album, width: 320, onTap: { onOpenAlbum(album) })
+                                .frame(width: 132)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+                .scrollIndicators(.hidden)
+            } else {
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: sizeClass.gridMin, maximum: sizeClass.gridMax),
+                                       spacing: sizeClass.gridSpacing.h)],
+                    alignment: .leading,
+                    spacing: sizeClass.gridSpacing.v
+                ) {
+                    ForEach(vm.albums) { album in
+                        PosterCard(item: album, width: 320, onTap: { onOpenAlbum(album) })
+                    }
                 }
             }
         }

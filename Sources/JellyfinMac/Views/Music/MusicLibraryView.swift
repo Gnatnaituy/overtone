@@ -19,6 +19,9 @@ struct MusicLibraryView: View {
     /// 排序结果缓存：滚动时不重复排序 1000+ 曲目
     @State private var displayedTracks: [BaseItemDto] = []
     @State private var appeared = false
+    /// 已挂载过的分段：切回不再重建。
+    /// 曲库「歌曲」分段一次要把可见的十几行实装出来，实测 0.27s 主线程 CPU / 次。
+    @State private var mountedSegments: Set<LibrarySegment> = []
 
     private var metrics: TrackRowMetrics { TrackRowMetrics(sizeClass: sizeClass) }
 
@@ -29,21 +32,35 @@ struct MusicLibraryView: View {
         )
     }
 
+    /// 本次渲染要出现的分段：已挂载的 + 当前选中的（首次进入即挂载）
+    private var renderedSegments: [LibrarySegment] {
+        var segments = mountedSegments
+        segments.insert(segment)
+        return LibrarySegment.allCases.filter { segments.contains($0) }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             topBar
             segmentBar
-            ScrollView {
-                PageContent(sizeClass: sizeClass) {
-                    content
+            // 每个分段一个常驻滚动体：切换只改可见性（已实现的行、滚动位置都保留）
+            ZStack {
+                ForEach(renderedSegments, id: \.self) { current in
+                    let active = current == segment
+                    segmentScroll(current)
+                        .opacity(active ? 1 : 0)
+                        // 同 MainView：只淡入进入的分段，离场瞬时切掉（交叉淡入两整段内容太贵）
+                        .animation(active ? Theme.Motion.base : nil, value: active)
+                        // 当前分段必须压在最上层，否则隐藏分段的滚动体会吃掉滚轮事件
+                        .zIndex(active ? 1 : 0)
+                        .disabled(!active)
+                        .accessibilityHidden(!active)
                 }
             }
-            .scrollIndicators(.hidden)
-            .background(ScrollBarHider())
-            // 滚动体不参与内容列宽度协商：内容再宽也不把顶栏顶出窗口右缘（§7.2 规则 3）
-            .pageBodyWidthClamp()
+            .animation(nil, value: segment)
         }
         .onAppear { appeared = true }
+        .onChange(of: segment) { newValue in mountedSegments.insert(newValue) }
         .task {
             // 启动页直接落在资料库时，等库 ID 解析完再拉取，避免页面空着
             await store.ensureLoaded()
@@ -55,6 +72,19 @@ struct MusicLibraryView: View {
         .onChange(of: store.dataRevision) { _ in
             displayedTracks = store.sortedTracks(by: sortMode)
         }
+    }
+
+    /// 单个分段的滚动体（原来只有一个滚动体，包着会随分段切换整体重建的内容）
+    private func segmentScroll(_ current: LibrarySegment) -> some View {
+        ScrollView {
+            PageContent(sizeClass: sizeClass) {
+                section(current)
+            }
+        }
+        .scrollIndicators(.hidden)
+        .background(ScrollBarHider())
+        // 滚动体不参与内容列宽度协商：内容再宽也不把顶栏顶出窗口右缘（§7.2 规则 3）
+        .pageBodyWidthClamp()
     }
 
     // MARK: - 顶栏（标题 + 视图切换 + 排序）
@@ -153,8 +183,8 @@ struct MusicLibraryView: View {
     // MARK: - 内容
 
     @ViewBuilder
-    private var content: some View {
-        switch segment {
+    private func section(_ current: LibrarySegment) -> some View {
+        switch current {
         case .albums: albumsSection
         case .artists: artistsSection
         case .tracks: tracksSection
@@ -193,6 +223,7 @@ struct MusicLibraryView: View {
 
     private var albumList: some View {
         VStack(spacing: 0) {
+            if Theme.isPaper { albumTableHeader }
             ForEach(store.albums.indices, id: \.self) { index in
                 let album = store.albums[index]
                 LibraryListRow(
@@ -203,6 +234,7 @@ struct MusicLibraryView: View {
                     isCurrent: false,
                     isPlaying: false,
                     metrics: metrics,
+                    trailingText: album.childCount.map { "\($0) 首" },
                     onTap: { onOpenAlbum(album) }
                 )
                 if index < store.albums.count - 1 {
@@ -211,6 +243,30 @@ struct MusicLibraryView: View {
             }
         }
         .libraryTableChrome()
+    }
+
+    /// 定宽表格表头（§6.3）：caption 级 + 强细线，列位与 `LibraryListRow` 对齐。
+    /// 只在 paper 出现 —— glass 的列表行本来没有表头。
+    private var albumTableHeader: some View {
+        HStack(spacing: Theme.Spacing.lg) {
+            Text("标题")
+                .padding(.leading, 40)
+            Spacer(minLength: 0)
+            Text("曲目")
+                .frame(width: 64, alignment: .trailing)
+        }
+        .textStyle(.caption, color: Theme.Paper.ink2)
+        .tracking(0.66)
+        .padding(.horizontal, metrics.horizontalPadding)
+        // 让开行尾的 chevron（约 21pt），表头才会压在数字列正上方
+        .padding(.trailing, Theme.Spacing.xxl)
+        .padding(.bottom, Theme.Spacing.sm)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Theme.Paper.hairlineStrong)
+                .frame(height: 1)
+        }
+        .accessibilityHidden(true)
     }
 
     // MARK: 艺人
@@ -257,6 +313,9 @@ struct MusicLibraryView: View {
                         metrics: metrics,
                         isCurrent: music.currentTrack?.id == displayedTracks[index].id,
                         isPlaying: music.isPlaying && music.currentTrack?.id == displayedTracks[index].id,
+                        // §6.3 / §4.4：资料库列表是定宽对齐表格 —— 不用点线，
+                        // 点线只给「可变长内容」的引导（曲目/队列/Top10）
+                        rowStyle: .alignedTable,
                         onTap: { MusicPlayerModel.shared.play(tracks: displayedTracks, startAt: index) }
                     )
                 }
@@ -295,6 +354,8 @@ struct LibraryListRow: View {
     var isCurrent = false
     var isPlaying = false
     let metrics: TrackRowMetrics
+    /// 定宽表格的右侧数值列（paper 的曲目数等）；nil = 不显示（glass 全部为 nil）
+    var trailingText: String?
     let onTap: () -> Void
 
     @State private var hovered = false
@@ -306,15 +367,14 @@ struct LibraryListRow: View {
                 if let artworkURL {
                     RemoteImage(url: artworkURL, contentMode: .fill)
                         .frame(width: 40, height: 40)
-                        .clipShape(isCircular
-                                   ? AnyShape(Circle())
-                                   : AnyShape(RoundedRectangle(cornerRadius: Theme.Radius.sm)))
+                        .modifier(LibraryRowCover(isCircular: isCircular))
                 }
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(title)
-                        .textStyle(.bodySM, weight: isCurrent ? .semibold : .medium,
-                                   color: isCurrent ? Theme.brandText : Theme.textPrimary)
+                        .paperSerifTitle(.bodySM,
+                                         weight: isCurrent ? .semibold : .medium,
+                                         color: isCurrent ? currentColor : Theme.textPrimary)
                         .lineLimit(1)
                     if !subtitle.isEmpty {
                         Text(subtitle)
@@ -324,6 +384,13 @@ struct LibraryListRow: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
+                if let trailingText {
+                    Text(trailingText)
+                        .textStyle(.mono, color: Theme.Paper.ink2)
+                        .frame(width: 64, alignment: .trailing)
+                        .fixedSize()
+                }
+
                 Image(systemName: "chevron.right")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(Theme.textTertiary)
@@ -331,7 +398,9 @@ struct LibraryListRow: View {
             .padding(.horizontal, metrics.horizontalPadding)
             .frame(height: metrics.rowHeight)
             .background(
-                RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                // paper 的表格行是「整行铺满的纸面高亮」——预览 `.ld-row:hover` 没有圆角，
+                // 所以这里用 0 而不是发明一个新的圆角档；glass 仍是 Radius.sm 圆角条
+                RoundedRectangle(cornerRadius: Theme.isPaper ? 0 : Theme.Radius.sm)
                     .fill(hovered ? Theme.surfaceHover : Color.clear)
             )
             .contentShape(Rectangle())
@@ -341,7 +410,29 @@ struct LibraryListRow: View {
         .focused($focused)
         .onHover { hovered = $0 }
         .animation(Theme.Motion.micro, value: hovered)
-        .accessibilityLabel("\(title)，\(subtitle)")
+        .accessibilityLabel(trailingText.map { "\(title)，\(subtitle)，\($0)" } ?? "\(title)，\(subtitle)")
+    }
+
+    /// 当前行文字：paper 用 signal-ink（红只给正在发声的行），glass 保持 brandText
+    private var currentColor: Color {
+        Theme.isPaper ? Theme.Paper.signalInk : Theme.brandText
+    }
+}
+
+/// 列表行封面：glass = 圆角 6 / 圆形；paper = 圆形歌手的头像不变，专辑封面走套封框
+private struct LibraryRowCover: ViewModifier {
+    let isCircular: Bool
+
+    func body(content: Content) -> some View {
+        if isCircular {
+            content.clipShape(Circle())
+        } else if Theme.isPaper {
+            content
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.cover))
+                .paperCoverFrame(true, cornerRadius: Theme.Radius.cover)
+        } else {
+            content.clipShape(RoundedRectangle(cornerRadius: Theme.Radius.sm))
+        }
     }
 }
 
@@ -356,17 +447,28 @@ struct RowDivider: View {
 }
 
 extension View {
-    /// 表格容器：白卡 + radius-lg + borderSubtle
+    /// 表格容器：glass = 白卡 + radius-lg + borderSubtle；paper = 不套卡 ——
+    /// 印刷品的表格靠表头强细线与行间 hairline 分层，卡片会把「纸面」再糊一层灰（§6.3 / §3 零投影）
     func libraryTableChrome() -> some View {
-        self
-            .background(
-                RoundedRectangle(cornerRadius: Theme.Radius.lg)
-                    .fill(Theme.surface)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.Radius.lg)
-                    .strokeBorder(Theme.borderSubtle)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.lg))
+        modifier(LibraryTableChrome())
+    }
+}
+
+private struct LibraryTableChrome: ViewModifier {
+    func body(content: Content) -> some View {
+        if Theme.isPaper {
+            content
+        } else {
+            content
+                .background(
+                    RoundedRectangle(cornerRadius: Theme.Radius.lg)
+                        .fill(Theme.surface)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: Theme.Radius.lg)
+                        .strokeBorder(Theme.borderSubtle)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.lg))
+        }
     }
 }

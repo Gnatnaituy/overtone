@@ -89,15 +89,16 @@ struct RemoteImage: View {
     @State private var image: NSImage?
 
     var body: some View {
-        ZStack {
+        // 用 if/else 直接切内容（默认转场就是淡入），不再套一层 ZStack + 显式 transition：
+        // 这个视图在曲库 / 专辑 / 艺人 / 播放列表里每个格子（以及每一行封面）都有一个，
+        // 少一层容器就是每页少几十个视图节点。
+        Group {
             if let image {
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: contentMode)
-                    .transition(.opacity)
             } else {
                 placeholder
-                    .transition(.opacity)
             }
         }
         .animation(Theme.Motion.base, value: image == nil)
@@ -155,6 +156,9 @@ struct PageTopBar<Trailing: View>: View {
             if let title {
                 Text(title)
                     .textStyle(sizeClass.isNarrow ? .title3 : .title2, color: Theme.textPrimary)
+                    // paper 的页面标题走衬线（§2.2：展示衬线承担「印刷」气质）。
+                    // 不依赖 TextStyle.design 的映射而显式声明一次：glass 侧 `.default` 与改动前同值
+                    .fontDesign(Theme.isPaper ? .serif : .default)
                     .lineLimit(1)
                     .accessibilityAddTraits(.isHeader)
             }
@@ -200,7 +204,19 @@ struct BreadcrumbBar: View {
     let title: String
     var showsShortcutHint = true
 
+    /// paper 下上级按钮的 hover 底（§6.4 面包屑是幽灵按钮，不是 sunken 胶囊）
+    @State private var parentHovered = false
+
     var body: some View {
+        if Theme.isPaper {
+            paperBody
+        } else {
+            glassBody
+        }
+    }
+
+    /// glass（v3）形态：与改动前逐字一致
+    private var glassBody: some View {
         HStack(spacing: Theme.Spacing.md) {
             Button(action: { onParent?() }) {
                 HStack(spacing: Theme.Spacing.sm) {
@@ -242,6 +258,54 @@ struct BreadcrumbBar: View {
         .background(WindowDragArea())
         .glassPanel(.thin, cornerRadius: Theme.Size.panelRadius, elevation: nil)
         // 与 PageTopBar 同一悬浮节奏：顶部留 panelMargin，不再贴住窗口上缘
+        .padding(.top, Theme.Size.panelMargin)
+        .padding(.horizontal, Theme.Size.panelGap)
+    }
+
+    /// paper 形态（§6.4）：‹ 资料库 ›—— 上级是幽灵按钮，当前项是衬线标题，分隔符 ink-3
+    private var paperBody: some View {
+        HStack(spacing: Theme.Spacing.md) {
+            Button(action: { onParent?() }) {
+                HStack(spacing: Theme.Spacing.xs) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(parentTitle ?? "返回")
+                        .textStyle(.bodySM, weight: .medium, color: Theme.Paper.ink2)
+                }
+                .padding(.horizontal, Theme.Spacing.sm)
+                .frame(height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                        .fill(parentHovered ? Theme.Paper.hover : .clear)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.sm))
+            }
+            .buttonStyle(.plain)
+            .acceptClickThrough()
+            .disabled(onParent == nil)
+            .help("返回上一级（⌘[）")
+            .accessibilityLabel("返回\(parentTitle ?? "上一级")")
+            .onHover { parentHovered = $0 }
+
+            Text("›")
+                .textStyle(.bodySM, color: Theme.Paper.ink3)
+
+            Text(title)
+                .textStyle(.title4, weight: .bold, color: Theme.Paper.ink)
+                .fontDesign(.serif)
+                .lineLimit(1)
+
+            Spacer(minLength: 0)
+
+            if showsShortcutHint && !sizeClass.isNarrow {
+                Text("⌘[ 返回")
+                    .textStyle(.caption, color: Theme.Paper.ink3)
+            }
+        }
+        .padding(.horizontal, sizeClass.pageMargin)
+        .frame(height: Theme.Size.crumbBarHeight)
+        .background(WindowDragArea())
+        .glassPanel(.thin, cornerRadius: Theme.Size.panelRadius, elevation: nil)
         .padding(.top, Theme.Size.panelMargin)
         .padding(.horizontal, Theme.Size.panelGap)
     }
@@ -351,13 +415,15 @@ struct PosterCard: View {
             .buttonStyle(.plain)
             .acceptClickThrough()
             .focused($focused)
-            .focusRing(focused, cornerRadius: Theme.Radius.md)
+            .focusRing(focused, cornerRadius: Theme.isPaper ? Theme.Radius.cover : Theme.Radius.md)
             .help("打开 \(item.name ?? "专辑")")
             .accessibilityLabel("\(item.name ?? "未知标题")，\(subtitle)")
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(item.name ?? "未知标题")
-                    .textStyle(.bodySM, weight: .semibold, color: Theme.textPrimary)
+                    .textStyle(Theme.isPaper ? .body : .bodySM, weight: .semibold, color: Theme.textPrimary)
+                    // 专辑名走衬线（§4.6 网格卡：封面 + 衬线专辑名 14/600）
+                    .fontDesign(Theme.isPaper ? .serif : .default)
                     .lineLimit(1)
                 Text(subtitle)
                     .textStyle(.footnote, color: Theme.textSecondary)
@@ -366,7 +432,10 @@ struct PosterCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .offset(y: Theme.lift(hovered, reduceMotion: reduceMotion))
-        .animation(Theme.Motion.spring, value: hovered)
+        // hover 上浮用 micro（120ms）而不是 0.35s 弹簧：卡片有 2pt 位移 + 阴影换挡，
+        // 弹簧尾巴要跑 1s 以上，实测悬停一张卡片会让主线程连续出帧 1.7s。
+        // 位移只有 2pt，120ms 已经足够顺，且"跟手"感更好。
+        .animation(Theme.Motion.micro, value: hovered)
         .onHover { hovered = $0 }
     }
 
@@ -374,13 +443,15 @@ struct PosterCard: View {
         RemoteImage(url: item.artworkURL(width: Int(width)), contentMode: .fill)
             .aspectRatio(posterAspect, contentMode: .fit)
             .frame(maxWidth: .infinity)
-            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
+            .clipShape(RoundedRectangle(cornerRadius: Theme.isPaper ? Theme.Radius.cover : Theme.Radius.md))
+            // paper：印刷套封（§4.6 2px 圆角 + 3px 内描边）；glass 下该方法原样返回
+            .paperCoverFrame(Theme.isPaper)
             .elevation(hovered ? .e2 : .e1)
             .overlay {
                 // hover / 键盘聚焦：压暗 + 中央播放角标
                 if hovered || focused {
                     ZStack {
-                        RoundedRectangle(cornerRadius: Theme.Radius.md)
+                        RoundedRectangle(cornerRadius: Theme.isPaper ? Theme.Radius.cover : Theme.Radius.md)
                             .fill(Theme.coverScrim)
                         Image(systemName: "play.fill")
                             .font(.system(size: 22, weight: .semibold))
@@ -390,6 +461,8 @@ struct PosterCard: View {
                     .allowsHitTesting(false)
                 }
             }
+            // paper 不用上浮（§4.6）：hover 让封面下移 1px，像活版压下去
+            .offset(y: Theme.isPaper && hovered && !reduceMotion ? 1 : 0)
             .animation(Theme.Motion.micro, value: hovered)
     }
 
@@ -430,6 +503,12 @@ struct ArtistCard: View {
                     .clipShape(Circle())
                     .elevation(hovered ? .e2 : .e1)
                     .overlay {
+                        // paper：圆形头像没有「套封框」，改用 1px 强 hairline 描边（§2.3 描边是主要分隔手段）
+                        if Theme.isPaper {
+                            Circle().strokeBorder(Theme.Paper.hairlineStrong, lineWidth: 1)
+                        }
+                    }
+                    .overlay {
                         if hovered || focused {
                             Circle()
                                 .fill(Theme.coverScrim)
@@ -441,9 +520,12 @@ struct ArtistCard: View {
                                 .transition(.opacity)
                         }
                     }
+                    // paper 不用上浮（§4.6）：hover 下沉 1px 的活版按压感
+                    .offset(y: Theme.isPaper && hovered && !reduceMotion ? 1 : 0)
 
                 Text(artist.name ?? "未知艺术家")
                     .textStyle(.bodySM, weight: .medium, color: Theme.textPrimary)
+                    .fontDesign(Theme.isPaper ? .serif : .default)
                     .lineLimit(1)
                     .padding(.horizontal, Theme.Spacing.xs)
             }
@@ -453,9 +535,12 @@ struct ArtistCard: View {
         .buttonStyle(.plain)
         .acceptClickThrough()
         .focused($focused)
-        .focusRing(focused, cornerRadius: Theme.Radius.md)
+        .focusRing(focused, cornerRadius: Theme.isPaper ? Theme.Radius.cover : Theme.Radius.md)
         .offset(y: Theme.lift(hovered, reduceMotion: reduceMotion))
-        .animation(Theme.Motion.spring, value: hovered)
+        // hover 上浮用 micro（120ms）而不是 0.35s 弹簧：卡片有 2pt 位移 + 阴影换挡，
+        // 弹簧尾巴要跑 1s 以上，实测悬停一张卡片会让主线程连续出帧 1.7s。
+        // 位移只有 2pt，120ms 已经足够顺，且"跟手"感更好。
+        .animation(Theme.Motion.micro, value: hovered)
         .onHover { hovered = $0 }
         .help(artist.name ?? "艺人")
     }
@@ -590,6 +675,286 @@ struct TrackRowMetrics {
     var horizontalPadding: CGFloat { sizeClass == .w0 ? 8 : 12 }
 }
 
+// MARK: - 纸墨列表行（§4.4 两种：标题弹性行 / 定宽对齐列）
+
+/// 纸墨曲目行的两种形态（§4.4）。
+///
+/// 两种的差别只在**列宽怎么定**：`.leaderDots` 是「标题弹性 + 艺人定宽列」（详情表 / 队列 /
+/// Top10 这类可变长内容），`.alignedTable` 是「专辑 + 艺人都是定宽列」（资料库列表视图 §6.3）。
+///
+/// 名字里的 `leaderDots` 是历史：这一行原本还会画 v4 的「点线引导」，
+/// 2026-10-14 用户裁决撤掉点线（「横线太多了」，见 `PaperTrackRow` 内的注释），
+/// 行几何完全没变，所以保留旧名不做大面积改名（改名要动 20+ 处注释与文档）。
+enum TrackRowStyle {
+    case leaderDots
+    case alignedTable
+}
+
+/// paper 列表行的列宽与行高。表头与行必须同源取值，否则列会错位。
+enum PaperRowMetrics {
+    /// 序号列（mono 12，右对齐；对齐列下数字不跳动）
+    static let index: CGFloat = 32
+    static let cover: CGFloat = 40
+    static let duration: CGFloat = 56
+    /// 操作列（收藏 / 更多，hover 或键盘聚焦才显形）
+    static let actions: CGFloat = 62
+    /// 详情表行（§4.4「行高 56（详情表）」）
+    static let detailRowHeight: CGFloat = 56
+    /// 资料库列表 / 队列行（§4.4「48（队列）」）
+    static let listRowHeight: CGFloat = 48
+}
+
+/// 列表行右端的 VU 迷你段条（§4.5）。
+///
+/// 单独成视图：`PlaybackProgress` 每 0.5s 发布一次，若由行视图直接观察，整张表
+/// （可能上千行）都会跟着 2Hz 重算。观察收在这里，重算范围只剩这一根段条。
+struct RowMiniVU: View {
+    let isPlaying: Bool
+    var width: CGFloat = 64
+
+    @ObservedObject private var progress = MusicPlayerModel.shared.progress
+
+    var body: some View {
+        VUMiniProgress(value: ratio, isPlaying: isPlaying)
+            .frame(width: width)
+    }
+
+    private var ratio: Double {
+        guard progress.duration > 0 else { return 0 }
+        return min(max(progress.position / progress.duration, 0), 1)
+    }
+}
+
+/// 纸墨曲目行：曲目列表 / 详情表 / 队列 / 搜索结果共用同一形态。
+///
+/// 三处调用在 paper 下长得一样，做成一个视图而不是复制三份 —— 点线、左缘红条、
+/// ON AIR、VU 段条这四处一旦各写一遍，任何一处的微调都会让同一个「标志性组件」
+/// 在三个页面里不一致。
+struct PaperTrackRow<Actions: View>: View {
+    let track: BaseItemDto
+    let index: Int
+    var showsIndex = true
+    var isCurrent = false
+    var isPlaying = false
+    var style: TrackRowStyle = .leaderDots
+    /// 行高：详情表 56 / 列表与队列 48（§4.4）
+    var rowHeight: CGFloat = PaperRowMetrics.listRowHeight
+    var horizontalPadding: CGFloat = Theme.Spacing.lg
+    /// `.alignedTable` 的「专辑 · 艺人」列宽
+    var albumColumnWidth: CGFloat?
+    /// 点线行的「艺人」列宽（§4.4 `曲名 …… 艺人 时长`）。
+    /// nil = 放不下这么多列（w0 / 队列面板），艺人退回标题下的副标题行，信息不丢
+    var artistColumnWidth: CGFloat?
+    /// 极窄列（320pt 队列面板 / 迷你播放条降级档）用紧凑徽标，只留红方块
+    var compactBadge = false
+    /// 宽断点（w3+）把播放次数抽成独立的 mono 列（§3「数字一律 mono + tabular-nums」）
+    var showsPlayCount = false
+    let onTap: () -> Void
+    /// 右端操作列；参数 = 是否显形（hover 或键盘聚焦），保持 v3 的可达性约定
+    @ViewBuilder var actions: (_ revealed: Bool) -> Actions
+
+    @State private var hovered = false
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Button(action: onTap) {
+                HStack(spacing: 0) {
+                    if showsIndex || isCurrent {
+                        indexColumn
+                    }
+
+                    RemoteImage(url: track.artworkURL(width: 96), contentMode: .fill)
+                        .frame(width: PaperRowMetrics.cover, height: PaperRowMetrics.cover)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.cover))
+                        .paperCoverFrame(true)
+                        .padding(.trailing, Theme.Spacing.lg)
+
+                    if style == .leaderDots {
+                        // 2026-10-14 用户裁决：列表不再画点线引导（「横线太多了」）。
+                        // 点线原本吃掉的那段宽度改成纯弹性空白 —— 标题列 ≤260 + 艺人定宽列 +
+                        // 次数 / 时长列的对齐关系与画点线时完全一致，只是不再画点。
+                        HStack(spacing: 0) {
+                            titleColumn
+                            Spacer(minLength: 12)
+                        }
+                        if let artistColumnWidth {
+                            // §4.4 / §6.4：标题之后是「艺人」定宽列，表头同源对齐
+                            Text(artistText)
+                                .textStyle(.footnote, color: Theme.Paper.ink2)
+                                .lineLimit(1)
+                                .frame(width: artistColumnWidth, alignment: .leading)
+                                .padding(.leading, Theme.Spacing.lg)
+                        }
+                    } else {
+                        titleColumn
+                        // 窄断点不给专辑列（与 glass 表格同一降级规则）：320pt 下硬塞 200pt 列
+                        // 会把标题挤没，列宽自适应比「对齐」更重要
+                        if let albumColumnWidth {
+                            Text(albumArtistText)
+                                .textStyle(.footnote, color: Theme.Paper.ink2)
+                                .lineLimit(1)
+                                .frame(width: albumColumnWidth, alignment: .leading)
+                                .padding(.leading, Theme.Spacing.lg)
+                        }
+                    }
+
+                    valueColumn
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .acceptClickThrough()
+            .focused($focused)
+            // 行信息合并为单元素朗读；收藏 / 更多仍是独立可达元素
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(accessibilityLabel)
+            .accessibilityAddTraits(isCurrent ? [.isButton, .isSelected] : .isButton)
+
+            actions(hovered || focused)
+        }
+        .padding(.horizontal, horizontalPadding)
+        .padding(.vertical, Theme.Spacing.xs)
+        // 用 minHeight 而不是定高：xxLarge 字号下右侧数值允许换行，行高自适应（§8）
+        .frame(minHeight: rowHeight)
+        .background(rowBackground)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Theme.Paper.hairline).frame(height: 1)
+        }
+        .overlay(alignment: .leading) {
+            // 当前行：左缘 3px 信号红条（与 ON AIR 徽标、VU 段条一起，颜色不单独承载信息）
+            if isCurrent {
+                Rectangle().fill(Theme.brand500).frame(width: 3)
+            }
+        }
+        .contentShape(Rectangle())
+        .animation(Theme.Motion.micro, value: hovered)
+        .onHover { hovered = $0 }
+    }
+
+    @ViewBuilder
+    private var indexColumn: some View {
+        Group {
+            if isCurrent {
+                // 当前曲保留序号并染成信号色（§4.4：印刷品的「正在播放」是圈出来的那一行）
+                Text("\(index + 1)")
+                    .textStyle(.mono, weight: .bold, color: Theme.brandText)
+            } else if hovered || focused {
+                Image(systemName: "play.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.brandText)
+            } else {
+                Text("\(index + 1)")
+                    .textStyle(.mono, color: Theme.Paper.ink3)
+            }
+        }
+        .frame(width: PaperRowMetrics.index, alignment: .trailing)
+        .padding(.trailing, Theme.Spacing.lg)
+    }
+
+    private var titleColumn: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(track.name ?? "")
+                .textStyle(.body, weight: .semibold,
+                           color: isCurrent ? Theme.brandText : Theme.Paper.ink)
+                .lineLimit(1)
+            // 只有「艺人」列放不下时才把艺人 / 专辑压成副标题行；对齐列则抽成独立列
+            if style == .leaderDots, artistColumnWidth == nil, !subtitleText.isEmpty {
+                Text(subtitleText)
+                    .textStyle(.footnote, color: Theme.Paper.ink2)
+                    .lineLimit(1)
+            }
+        }
+        // 有上限地吃掉可用宽度：标题过长时截断（§7 超长标题），不把点线和数值挤出窗口
+        .frame(maxWidth: style == .leaderDots ? 260 : .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private var valueColumn: some View {
+        if isCurrent {
+            HStack(spacing: Theme.Spacing.md) {
+                OnAirBadge(isPlaying: isPlaying, compact: compactBadge)
+                RowMiniVU(isPlaying: isPlaying)
+            }
+            .padding(.leading, Theme.Spacing.lg)
+        } else {
+            HStack(spacing: 0) {
+                if showsPlayCount, let count = track.userData?.playCount, count > 0 {
+                    Text("\(count) 次")
+                        .textStyle(.mono, color: Theme.Paper.ink3)
+                        .padding(.trailing, Theme.Spacing.lg)
+                }
+                Text(formatPlaybackTime(track.runtimeSeconds))
+                    .textStyle(.mono, color: Theme.Paper.ink2)
+                    .frame(width: PaperRowMetrics.duration, alignment: .trailing)
+            }
+            .padding(.leading, Theme.Spacing.lg)
+        }
+    }
+
+    private var rowBackground: Color {
+        // 当前行底 = 信号红 8%（§2.1：红只属于声音）
+        if isCurrent { return Theme.Paper.signalTint }
+        if hovered { return Theme.Paper.hover }
+        return .clear
+    }
+
+    /// 点线行副标题：艺人 · 专辑（播放次数在宽断点是独立的 mono 列）
+    private var subtitleText: String {
+        var parts: [String] = []
+        if let artist = track.albumArtist, !artist.isEmpty {
+            parts.append(artist)
+        } else if let album = track.album, !album.isEmpty {
+            parts.append(album)
+        }
+        if let album = track.album, !album.isEmpty, album != track.albumArtist {
+            parts.append(album)
+        }
+        if !showsPlayCount, let count = track.userData?.playCount, count > 0 {
+            parts.append("播放 \(count) 次")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private var albumArtistText: String {
+        [track.albumArtist, track.album]
+            .compactMap { $0 }
+            .filter { !$0.isEmpty }
+            .joined(separator: " · ")
+    }
+
+    /// 点线行「艺人」列的文字（没有 albumArtist 时退回专辑名，避免出现空列）
+    private var artistText: String {
+        if let artist = track.albumArtist, !artist.isEmpty { return artist }
+        return track.album ?? ""
+    }
+
+    private var accessibilityLabel: String {
+        var parts: [String] = []
+        if showsIndex { parts.append("第 \(index + 1) 首") }
+        parts.append(track.name ?? "未知曲目")
+        let sub = style == .alignedTable ? albumArtistText : (artistColumnWidth == nil ? subtitleText : artistText)
+        if !sub.isEmpty { parts.append(sub) }
+        parts.append(formatPlaybackTime(track.runtimeSeconds))
+        if isCurrent { parts.append(isPlaying ? "播放中" : "已暂停") }
+        return parts.joined(separator: "，")
+    }
+}
+
+/// paper 点线行的「艺人」列宽（§4.4 / §6.4）。
+///
+/// w0（内容列可低至 320pt）整列不出现 —— 硬塞 120pt 艺人列会让曲名只剩十几个点，
+/// 这时艺人退回标题下的副标题行。表头与行都用这条规则，列才不会错位。
+extension LayoutSizeClass {
+    var paperArtistColumnWidth: CGFloat? {
+        switch self {
+        case .w0: return nil
+        case .w1: return 120
+        default: return 160
+        }
+    }
+}
+
 // MARK: - 列表模式曲目行（高 48；选中 = surfaceSelected + 3pt 指示条 + 主色标题）
 
 struct MusicRow: View {
@@ -598,6 +963,9 @@ struct MusicRow: View {
     let metrics: TrackRowMetrics
     var isCurrent = false
     var isPlaying = false
+    /// 纸墨变体（§4.4）：资料库列表视图由 pages 显式传 `.alignedTable`（§6.3 定宽对齐列），
+    /// 其余调用点（搜索歌曲组 / 播放列表详情 / DiscoverPages）保持默认点线行
+    var rowStyle: TrackRowStyle = .leaderDots
     var onRemove: (() -> Void)?
     var onTap: () -> Void
 
@@ -605,6 +973,15 @@ struct MusicRow: View {
     @FocusState private var rowFocused: Bool
 
     var body: some View {
+        if Theme.isPaper {
+            paperRow
+        } else {
+            glassBody
+        }
+    }
+
+    /// glass（v3）形态：与改动前逐字一致，paper 分支不得改这里的任何取值
+    private var glassBody: some View {
         HStack(spacing: 0) {
             Button(action: onTap) {
                 HStack(spacing: 0) {
@@ -682,9 +1059,42 @@ struct MusicRow: View {
         .contextMenu { contextMenuItems }
     }
 
+    /// paper 形态（§4.4）：点线行 / 定宽对齐列两种，行间由 `PaperTrackRow` 画 hairline
+    private var paperRow: some View {
+        PaperTrackRow(
+            track: track,
+            index: index,
+            isCurrent: isCurrent,
+            isPlaying: isPlaying,
+            style: rowStyle,
+            rowHeight: metrics.rowHeight,
+            horizontalPadding: metrics.horizontalPadding,
+            albumColumnWidth: rowStyle == .alignedTable ? metrics.album : nil,
+            // §4.4/§6.4：点线行右侧是「艺人」定宽列（w0 放不下时退回副标题）
+            artistColumnWidth: rowStyle == .leaderDots ? metrics.sizeClass.paperArtistColumnWidth : nil,
+            // 极窄档（w0，内容列可低至 320pt）用紧凑徽标：完整的 ON AIR 灯牌要 ~48pt，
+            // 加上 VU 段条 64pt 会把标题挤到只剩十几个点
+            compactBadge: metrics.sizeClass == .w0,
+            // 宽断点（w3+，glass 下才有专辑列）才把播放次数抽成 mono 列
+            showsPlayCount: metrics.album != nil,
+            onTap: onTap
+        ) { revealed in
+            TrackRowActions(
+                track: track,
+                revealed: revealed,
+                onInfo: nil,
+                onRemove: onRemove
+            )
+            // 移除按钮会多占一档宽度
+            .frame(width: metrics.actions + (onRemove == nil ? 0 : Theme.Size.iconButtonSm + 2))
+        }
+        .contextMenu { contextMenuItems }
+    }
+
     @ViewBuilder
     private var indexColumn: some View {
-        ZStack {
+        // 只可能显示一个分支，不需要 ZStack 撑一层容器
+        Group {
             if isCurrent {
                 EqualizerBars(
                     active: isPlaying,
@@ -766,6 +1176,15 @@ struct TrackTableHeader: View {
     var showsArtist = false
 
     var body: some View {
+        if Theme.isPaper {
+            paperHeader
+        } else {
+            glassBody
+        }
+    }
+
+    /// glass（v3）形态：与改动前逐字一致
+    private var glassBody: some View {
         HStack(spacing: 0) {
             Text("#")
                 .frame(width: 56, alignment: .leading)
@@ -783,6 +1202,40 @@ struct TrackTableHeader: View {
         .padding(.horizontal, 16)
         .frame(height: 36)
         .glassPanel(.thick, cornerRadius: 0, elevation: nil)
+        .accessibilityHidden(true)
+    }
+
+    /// paper 表头（§6.4「表头：caption 级 + 细线」）：列宽与 `PaperTrackRow` 同源，
+    /// 因此「时长」列的右边缘与行的时长列严格对齐（行右侧还留着 62pt 操作列）
+    private var paperHeader: some View {
+        HStack(spacing: 0) {
+            Text("#")
+                .frame(width: PaperRowMetrics.index, alignment: .trailing)
+                .padding(.trailing, Theme.Spacing.lg)
+            Color.clear.frame(width: PaperRowMetrics.cover, height: 1)
+                .padding(.trailing, Theme.Spacing.lg)
+            Text("标题")
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if let artistWidth = sizeClass.paperArtistColumnWidth {
+                // §6.4 表头含「艺人」列：与行同源取值，点线行右侧的艺人名才会落在表头正下方
+                Text("艺人")
+                    .frame(width: artistWidth, alignment: .leading)
+                    .padding(.leading, Theme.Spacing.lg)
+            }
+            Text("时长")
+                .frame(width: PaperRowMetrics.duration, alignment: .trailing)
+                .padding(.leading, Theme.Spacing.lg)
+            Color.clear.frame(width: PaperRowMetrics.actions, height: 1)
+        }
+        .textStyle(.caption, weight: .semibold, color: Theme.Paper.ink3)
+        .tracking(0.66)
+        .padding(.horizontal, Theme.Spacing.xl)
+        .frame(height: 32)
+        // 吸顶表头必须有底：纸面 canvas（滚动内容从下面穿过时不能透出来）
+        .background(Theme.Paper.canvas)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Theme.Paper.hairlineStrong).frame(height: 1)
+        }
         .accessibilityHidden(true)
     }
 }
@@ -812,10 +1265,15 @@ struct TrackTableRows: View {
                 onTap: { onTap(index) }
             )
             if index < tracks.count - 1 {
-                Rectangle()
-                    .fill(Theme.borderSubtle)
-                    .frame(height: 1)
-                    .padding(.leading, 56)
+                if Theme.isPaper {
+                    // paper 点线行自带底部 hairline（`PaperTrackRow`），这里不再画一条，否则成双线
+                    EmptyView()
+                } else {
+                    Rectangle()
+                        .fill(Theme.borderSubtle)
+                        .frame(height: 1)
+                        .padding(.leading, 56)
+                }
             }
         }
     }
@@ -851,6 +1309,15 @@ private struct TrackTableRow: View {
     @FocusState private var rowFocused: Bool
 
     var body: some View {
+        if Theme.isPaper {
+            paperRow
+        } else {
+            glassBody
+        }
+    }
+
+    /// glass（v3）形态：与改动前逐字一致
+    private var glassBody: some View {
         HStack(spacing: 0) {
             Button(action: onTap) {
                 HStack(spacing: 0) {
@@ -931,6 +1398,40 @@ private struct TrackTableRow: View {
         }
     }
 
+    /// paper 形态（§4.4「行高 56（详情表）」）：点线行 + 表头细线，
+    /// 当前曲把时长列换成 ON AIR 徽标 + VU 迷你段条
+    private var paperRow: some View {
+        PaperTrackRow(
+            track: track,
+            index: index,
+            isCurrent: isCurrent,
+            isPlaying: isPlaying,
+            rowHeight: PaperRowMetrics.detailRowHeight,
+            horizontalPadding: Theme.Spacing.xl,
+            artistColumnWidth: sizeClass.paperArtistColumnWidth,
+            // w0（内容列可低至 320pt）：详情表也在窄列里，徽标同样降级成红方块
+            compactBadge: sizeClass == .w0,
+            onTap: onTap
+        ) { revealed in
+            TrackRowActions(track: track, revealed: revealed)
+                .frame(width: PaperRowMetrics.actions)
+        }
+        .contextMenu {
+            Button {
+                MusicPlayerModel.shared.playNext(track)
+                ToastCenter.shared.show("已设为下一首播放", systemImage: "arrow.up.circle")
+            } label: {
+                Label("下一首播放", systemImage: "arrow.up.circle")
+            }
+            Button {
+                MusicPlayerModel.shared.enqueue([track])
+                ToastCenter.shared.show("已添加到播放队列", systemImage: "text.badge.plus")
+            } label: {
+                Label("添加到队列", systemImage: "text.badge.plus")
+            }
+        }
+    }
+
     private var rowBackground: Color {
         if isCurrent { return Theme.surfaceSelected }
         if hovered { return Theme.surfaceHover }
@@ -993,12 +1494,14 @@ struct PlaylistCard: View {
                 cover
                     .aspectRatio(1, contentMode: .fit)
                     .frame(maxWidth: .infinity)
-                    .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.isPaper ? Theme.Radius.cover : Theme.Radius.md))
+                    // paper：印刷套封（§4.6）
+                    .paperCoverFrame(Theme.isPaper)
                     .elevation(hovered ? .e2 : .e1, cornerRadius: Theme.Radius.md)
                     .overlay {
                         if hovered || focused {
                             ZStack {
-                                RoundedRectangle(cornerRadius: Theme.Radius.md)
+                                RoundedRectangle(cornerRadius: Theme.isPaper ? Theme.Radius.cover : Theme.Radius.md)
                                     .fill(Theme.coverScrim)
                                 Image(systemName: "play.fill")
                                     .font(.system(size: 22, weight: .semibold))
@@ -1007,14 +1510,27 @@ struct PlaylistCard: View {
                             .transition(.opacity)
                         }
                     }
+                    // paper 不用上浮（§4.6）：hover 下沉 1px 的活版按压感
+                    .offset(y: Theme.isPaper && hovered && !reduceMotion ? 1 : 0)
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(playlist.name)
-                        .textStyle(.bodySM, weight: .semibold, color: Theme.textPrimary)
+                        .textStyle(Theme.isPaper ? .body : .bodySM, weight: .semibold, color: Theme.textPrimary)
+                        // 列表名走衬线（§6.5 播放列表行用衬线大标题）
+                        .fontDesign(Theme.isPaper ? .serif : .default)
                         .lineLimit(1)
-                    Text(subtitle)
-                        .textStyle(.footnote, color: Theme.textSecondary)
-                        .lineLimit(1)
+                    HStack(spacing: Theme.Spacing.sm) {
+                        // §6.5：智能列表用泛音青小方点、本地列表用 ink-3 方点 —— 同步状态
+                        // 同时有彩色点 + 文字，颜色不单独承载信息
+                        if Theme.isPaper {
+                            RoundedRectangle(cornerRadius: 1)
+                                .fill(playlist.isSmart ? Theme.Paper.teal : Theme.Paper.ink3)
+                                .frame(width: 7, height: 7)
+                        }
+                        Text(subtitle)
+                            .textStyle(.footnote, color: Theme.textSecondary)
+                            .lineLimit(1)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1023,9 +1539,12 @@ struct PlaylistCard: View {
         .buttonStyle(.plain)
         .acceptClickThrough()
         .focused($focused)
-        .focusRing(focused, cornerRadius: Theme.Radius.md)
+        .focusRing(focused, cornerRadius: Theme.isPaper ? Theme.Radius.cover : Theme.Radius.md)
         .offset(y: Theme.lift(hovered, reduceMotion: reduceMotion))
-        .animation(Theme.Motion.spring, value: hovered)
+        // hover 上浮用 micro（120ms）而不是 0.35s 弹簧：卡片有 2pt 位移 + 阴影换挡，
+        // 弹簧尾巴要跑 1s 以上，实测悬停一张卡片会让主线程连续出帧 1.7s。
+        // 位移只有 2pt，120ms 已经足够顺，且"跟手"感更好。
+        .animation(Theme.Motion.micro, value: hovered)
         .onHover { hovered = $0 }
         .task { recomputeCoverTracks() }
         // 都是 O(1) 变更检测：`onChange(of: store.tracks)` 每次 body 更新都要比较整个曲库。
@@ -1123,6 +1642,8 @@ struct PlaylistCoverMosaic: View {
             }
         }
         .elevation(.e2, cornerRadius: cornerRadius)
+        // paper：拼图封面同样压印刷套封框（§4.6）
+        .paperCoverFrame(Theme.isPaper, cornerRadius: cornerRadius)
     }
 
     private func thumb(_ track: BaseItemDto?, size: CGFloat) -> some View {

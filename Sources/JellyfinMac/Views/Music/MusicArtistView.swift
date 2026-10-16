@@ -80,7 +80,7 @@ struct MusicArtistView: View {
         )
         .frame(width: coverSize, height: coverSize)
         .clipShape(Circle())
-        .elevation(.e2, cornerRadius: coverSize / 2)
+        .modifier(ArtistCoverChrome(coverSize: coverSize))
 
         if sizeClass.detailStacksVertically {
             VStack(alignment: .leading, spacing: Theme.Spacing.xxl) {
@@ -189,5 +189,24 @@ struct MusicArtistView: View {
             title: "这位艺人还没有可播放的内容",
             message: "服务器上的曲目可能缺少专辑关联"
         )
+    }
+}
+
+/// 艺人头像外观：glass = `e2` 投影；paper = 1px 强 hairline 圆描边。
+///
+/// 圆形头像没有「套封框」可加（§4.6 的压框只给方封面），而纸墨下 `elevation` 不出投影、
+/// 只在深色主题补一圈 `borderSubtle` —— 浅色纸面上头像会完全没有边。
+/// 这里与 T3 的 `ArtistCard` 保持同一手法（`Paper.hairlineStrong`，§2.3 描边是主要分隔手段）。
+private struct ArtistCoverChrome: ViewModifier {
+    let coverSize: CGFloat
+
+    func body(content: Content) -> some View {
+        if Theme.isPaper {
+            content.overlay(
+                Circle().strokeBorder(Theme.Paper.hairlineStrong, lineWidth: 1)
+            )
+        } else {
+            content.elevation(.e2, cornerRadius: coverSize / 2)
+        }
     }
 }

@@ -30,7 +30,11 @@ enum ContentPage: Equatable {
         }
     }
 
-    /// 侧栏高亮的归属项（详情页归属其上级）
+    /// 详情页兜底归属的一级页（只在面包屑拿不到上级时用，见 `parentTitle`）。
+    ///
+    /// **侧栏高亮不再走这里**：详情页该归哪个一级页，由导航栈（`sidebarHighlightRoot`）
+    /// 与列表行自己认领（`SidebarPanel`）决定 —— 否则「首页点开专辑」会错亮资料库，
+    /// 「选中我的列表里那一行」会错亮一级「播放列表」。
     var navRoot: ContentPage {
         switch self {
         case .artist, .album: return .library
@@ -55,11 +59,53 @@ enum LibrarySegment: String, CaseIterable {
     }
 }
 
+/// 侧栏固定的一级页。
+///
+/// 单独抽出来是为了给「一级页常驻」一个可哈希的粒度：`ContentPage` 带关联值
+/// （专辑 / 艺人 / 播放列表详情），不适合做常驻挂载的键。
+enum RootTab: String, CaseIterable, Hashable {
+    case home, library, playlists, nowPlaying, search
+
+    var page: ContentPage {
+        switch self {
+        case .home: return .home
+        case .library: return .library
+        case .playlists: return .playlists
+        case .nowPlaying: return .nowPlaying
+        case .search: return .search
+        }
+    }
+
+    init?(page: ContentPage) {
+        switch page {
+        case .home: self = .home
+        case .library: self = .library
+        case .playlists: self = .playlists
+        case .nowPlaying: self = .nowPlaying
+        case .search: self = .search
+        default: return nil
+        }
+    }
+}
+
 // MARK: - 主界面
 
 struct MainView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.appReduceMotion) private var reduceMotion
+    /// 订阅视觉风格。
+    ///
+    /// 两件事都靠它：① `Theme.isPaper` 是全局镜像、读了**不订阅**，而这棵树里有大量按风格
+    /// 分支的结构（侧栏/分组标签/播放条），不读环境值就可能在切风格后不重绘；
+    /// ② 它同时当 `.id`，把「换风格重建」限制在呈现层（见 body 末尾）。
+    @Environment(\.appVisualStyle) private var appStyle
+    /// 观察设置：**只为强调色**。
+    ///
+    /// 强调色是绘制时解析的动态色，`Theme.refreshAccent()` 那套「切一次外观再切回来」
+    /// 在 macOS 27 上已经不再让 SwiftUI 重绘内容 —— 实测改强调色后主窗口**逐像素不变**，
+    /// 而改动前的二进制同样如此（既有缺陷，不是本次引入）。所以这里把强调色并进
+    /// 呈现层的 `.id`：换强调色与换风格走同一条确定性重建路径。
+    @ObservedObject private var settings = AppSettings.shared
     // 注意：这里**不**观察 MusicPlayerModel / PlaylistStore。
     // 观察它们会让播放/暂停、切歌、队列变化、播放列表增删都重建整个界面
     // （侧栏 + 当前页 + 播放条），而 MainView 本身只需要知道「要不要显示播放条」——
@@ -161,6 +207,19 @@ struct MainView: View {
                     WindowManager.sidebarUsesRail = newValue
                     WindowManager.refreshTrafficLights()
                 }
+                // 换视觉风格 / 强调色只重建这棵「呈现子树」（侧栏 + 内容列 + 迷你播放条 + 抽屉）。
+                //
+                // 为什么挂在 HStack 而不是 MainView 的 body 最外层：`.id` 变化会丢掉**被它覆盖的
+                // 子树所持有的全部状态**。挂在最外层会把 MainView 自己的 @State（导航栈 stack、
+                // 抽屉、搜索词、排序、侧栏宽度）一起清掉 —— 换风格等于被弹回首页；挂在 HStack 上
+                // 则只复位呈现层的瞬态（滚动位置、行内 hover），业务状态全部存活。
+                //
+                // 为什么 id 里带强调色：强调色的动态色重解析在 macOS 27 上不触发 SwiftUI 重绘
+                // （见 `settings` 的注释），只有换视图身份才能让新色阶落到已布局的视图上。
+                //
+                // 前置条件：`AppSettings` 侧不再对 scene 挂 `.id`，改由这里承担重建职责
+                // （见 JellyfinApp / RootView 的注释）。
+                .id("\(appStyle.rawValue)-\(settings.accent.rawValue)")
             }
         }
         .background(Theme.canvas.ignoresSafeArea())
@@ -190,6 +249,7 @@ struct MainView: View {
                 SidebarPanel(
                     mode: .rail(offersDrawer: canExpand),
                     selected: currentPage,
+                    highlightRoot: sidebarHighlightRoot,
                     userName: appState.user?.name ?? "",
                     serverHost: APIClient.shared.baseURL?.host ?? "",
                     onSelect: handleSidebarSelect,
@@ -208,6 +268,7 @@ struct MainView: View {
                 SidebarPanel(
                     mode: .full,
                     selected: currentPage,
+                    highlightRoot: sidebarHighlightRoot,
                     userName: appState.user?.name ?? "",
                     serverHost: APIClient.shared.baseURL?.host ?? "",
                     onSelect: handleSidebarSelect,
@@ -223,6 +284,10 @@ struct MainView: View {
         // 顺序要紧：padding 必须在 glassPanel **之外**，玻璃才会缩进 10pt 成为悬浮面板；
         // 写在里面时玻璃会铺满含 padding 的整块（面板贴住窗口左/上/下边缘，观感与
         // 「贴边侧栏」无异，红黄绿三键也失去面板依托）。
+        // 悬浮面板：外边距 10 + 统一圆角。paper 下 `glassPanel` 已由 Theme 换成
+        // 不透明纸面（`Paper.sheet`）+ hairline 描边 + 零投影（契约 §1 映射表），
+        // 所以这里不另写 paper 分支 —— 悬浮边距与断点策略保持与 v3 完全一致，
+        // 红黄绿三键的位置（WindowManager）与内容列宽度计算都不用改。
         .glassPanel(.regular, cornerRadius: Theme.Size.panelRadius, elevation: .e2)
         .padding(.leading, Theme.Size.panelMargin)
         .padding(.vertical, Theme.Size.panelMargin)
@@ -250,6 +315,7 @@ struct MainView: View {
                 SidebarPanel(
                     mode: .full,
                     selected: currentPage,
+                    highlightRoot: sidebarHighlightRoot,
                     userName: appState.user?.name ?? "",
                     serverHost: APIClient.shared.baseURL?.host ?? "",
                     onSelect: { page in
@@ -276,6 +342,54 @@ struct MainView: View {
 
     private var currentPage: ContentPage { stack.last ?? .home }
 
+    /// 已挂载过的一级页：首次进入后常驻视图树。
+    ///
+    /// 原实现用 `ZStack { pageView(currentPage).id(pageIdentity).transition(...) }`，
+    /// 每次切页都会把上一页整棵视图树丢掉、把新一页重建 —— 实测一次切换要烧
+    /// 0.20–0.37s 主线程 CPU（曲库「歌曲」分段更贵：0.27s，且随可见行数线性增长）。
+    /// 现在只改可见性：列表已实现的行、滚动位置、图片缓存全部保留，切回几乎不花钱
+    /// （实测空页面地板价 0.07s，页面重建占了剩下的 60–75%）。
+    @State private var mountedTabs: Set<RootTab> = []
+    /// 每个一级页各自的 ⌘F 聚焦请求：隐藏页不参与聚焦，
+    /// 否则常驻的隐藏搜索框会去抢第一响应者，打字打进了看不见的输入框。
+    @State private var tabFocusRequest: [RootTab: Int] = [:]
+
+    /// 当前高亮的一级页：栈顶是一级页时取栈顶，否则取栈底（详情页下面压着的那层）
+    private var activeTab: RootTab? {
+        if let top = stack.last, let tab = RootTab(page: top) { return tab }
+        if let root = stack.first, let tab = RootTab(page: root) { return tab }
+        // bootstrap 结束（stack 落位）之前：先按启动落点挂载，避免内容区空白
+        return RootTab(page: initialPage)
+    }
+
+    /// 压在栈顶的二级详情页（专辑 / 艺人 / 播放列表 / 首页下沉页）
+    private var topDetailPage: ContentPage? {
+        guard let top = stack.last, RootTab(page: top) == nil else { return nil }
+        return top
+    }
+
+    /// 侧栏一级项的高亮归属：栈里那一层一级页。
+    ///
+    /// 详情页归属它**下面压着**的那一层 —— 与内容区常驻层的 `activeTab` 同一套归属，
+    /// 也就与面包屑（`parentTitle`）指向同一个页面：从首页点开的专辑，侧栏亮「首页」
+    /// 而不是「资料库」（旧实现按 `navRoot` 硬映射，必然错亮资料库）。
+    ///
+    /// 播放列表详情是唯一例外：完整侧栏下高亮归「我的列表」里那一行（§4.3 单点高亮），
+    /// 图标栏没有列表行可亮，才由一级「播放列表」承担（见 `SidebarPanel.isPrimarySelected`）。
+    ///
+    /// 兜底取 `currentPage.navRoot`：bootstrap 把 `stack` 落位之前栈是空的，那时内容区
+    /// 显示的是 `currentPage`（首页）那一层，侧栏跟着它才不会出现「内容首页、侧栏亮播放列表」。
+    private var sidebarHighlightRoot: ContentPage {
+        stack.first(where: { RootTab(page: $0) != nil }) ?? currentPage.navRoot
+    }
+
+    /// 本次渲染要出现的一级页：已挂载的 + 当前活跃的（首次进入即挂载）
+    private var renderedTabs: [RootTab] {
+        var tabs = mountedTabs
+        if let activeTab { tabs.insert(activeTab) }
+        return RootTab.allCases.filter { tabs.contains($0) }
+    }
+
     private var pageIdentity: String {
         switch currentPage {
         case .home: return "home"
@@ -294,13 +408,46 @@ struct MainView: View {
 
     private func content(sizeClass: LayoutSizeClass) -> some View {
         ZStack {
-            pageView(currentPage, sizeClass: sizeClass)
-                .id(pageIdentity)
-                // 页面切换：260ms，位移 8pt + 淡入（§7）；Reduce Motion 下只保留透明度
-                .transition(pageTransition)
+            // 一级页常驻层：切换只改可见性 + 命中/无障碍开关
+            ZStack {
+                ForEach(renderedTabs, id: \.self) { tab in
+                    let visible = topDetailPage == nil && tab.page == currentPage
+                    pageView(tab.page, sizeClass: sizeClass, searchFocus: tabFocusRequest[tab] ?? 0)
+                        .opacity(visible ? 1 : 0)
+                        // 只给「进入」的那一页做淡入，离场页瞬时切掉。
+                        // 交叉淡入会让两整页（含玻璃层）在转场期间逐帧重绘 —— 实测每次
+                        // 切换多花 ~0.09s 主线程 CPU；一级页常驻之后切换本身几乎不花钱，
+                        // 这笔账不值得。想彻底不要转场就把下面这行换成 `.animation(nil, …)`。
+                        .animation(visible ? pageFadeIn : nil, value: visible)
+                        // 当前页必须在最上层：ZStack 的最后一项才在顶部，而 `.opacity(0)`
+                        // 不参与点击/滚动命中——不抬 zIndex 的话，压在顶上的隐藏页会吃掉
+                        // 可见页的滚轮事件（表现为「列表滚不动」）。
+                        .zIndex(visible ? 1 : 0)
+                        .disabled(!visible)
+                        .accessibilityHidden(!visible)
+                }
+            }
+            .animation(nil, value: activeTab)
+
+            // 栈顶详情页：生命周期短，仍按原先的推入 / 移除 + 转场处理
+            if let detail = topDetailPage {
+                pageView(detail, sizeClass: sizeClass, searchFocus: searchFocusRequest)
+                    .id(pageIdentity)
+                    // 页面切换：260ms，位移 8pt + 淡入（§7）；Reduce Motion 下只保留透明度
+                    .transition(pageTransition)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(reduceMotion ? Theme.Motion.reduced : Theme.Motion.page, value: pageIdentity)
+        .onChange(of: activeTab) { newValue in
+            // 记住访问过的一级页：切走后仍然常驻
+            if let newValue { mountedTabs.insert(newValue) }
+        }
+    }
+
+    /// 一级页「进入」时的淡入时长（§7 页面转场；Reduce Motion 下同样只保留透明度）
+    private var pageFadeIn: Animation {
+        reduceMotion ? Theme.Motion.reduced : Theme.Motion.page
     }
 
     private var pageTransition: AnyTransition {
@@ -312,7 +459,7 @@ struct MainView: View {
     }
 
     @ViewBuilder
-    private func pageView(_ page: ContentPage, sizeClass: LayoutSizeClass) -> some View {
+    private func pageView(_ page: ContentPage, sizeClass: LayoutSizeClass, searchFocus: Int) -> some View {
         switch page {
         case .home:
             HomeView(
@@ -325,7 +472,7 @@ struct MainView: View {
                 onOpenMostPlayed: { openFromHome(.mostPlayed) },
                 onOpenNowPlaying: { selectPage(.nowPlaying) },
                 searchQuery: $searchQuery,
-                searchFocusRequest: searchFocusRequest,
+                searchFocusRequest: searchFocus,
                 onSearchSubmit: { selectPage(.search) }
             )
         case .library:
@@ -339,7 +486,7 @@ struct MainView: View {
                 onOpenAlbum: { push(.album($0)) },
                 onOpenPlaylist: { push(.playlist($0)) },
                 searchQuery: $searchQuery,
-                searchFocusRequest: searchFocusRequest,
+                searchFocusRequest: searchFocus,
                 onSearchSubmit: { selectPage(.search) }
             )
         case .playlists:
@@ -347,7 +494,7 @@ struct MainView: View {
                 sizeClass: sizeClass,
                 onOpenPlaylist: { push(.playlist($0)) },
                 searchQuery: $searchQuery,
-                searchFocusRequest: searchFocusRequest,
+                searchFocusRequest: searchFocus,
                 onSearchSubmit: { selectPage(.search) }
             )
         case .nowPlaying:
@@ -356,7 +503,7 @@ struct MainView: View {
             MusicSearchView(
                 sizeClass: sizeClass,
                 query: $searchQuery,
-                focusRequest: searchFocusRequest,
+                focusRequest: searchFocus,
                 onOpenAlbum: { push(.album($0)) },
                 onOpenArtist: { push(.artist($0)) },
                 onOpenPlaylist: { push(.playlist($0)) }
@@ -372,7 +519,7 @@ struct MainView: View {
                 parentTitle: "首页",
                 onBack: pop,
                 searchQuery: $searchQuery,
-                searchFocusRequest: searchFocusRequest,
+                searchFocusRequest: searchFocus,
                 onSearchSubmit: { selectPage(.search) }
             )
         case .recentlyPlayed:
@@ -385,7 +532,7 @@ struct MainView: View {
                 parentTitle: "首页",
                 onBack: pop,
                 searchQuery: $searchQuery,
-                searchFocusRequest: searchFocusRequest,
+                searchFocusRequest: searchFocus,
                 onSearchSubmit: { selectPage(.search) }
             )
         case .mostPlayed:
@@ -399,7 +546,7 @@ struct MainView: View {
                 parentTitle: "首页",
                 onBack: pop,
                 searchQuery: $searchQuery,
-                searchFocusRequest: searchFocusRequest,
+                searchFocusRequest: searchFocus,
                 onSearchSubmit: { selectPage(.search) }
             )
         case .artist(let artist):
@@ -514,6 +661,8 @@ struct MainView: View {
     private func focusSearch() {
         if currentPage != .search { selectPage(.search) }
         searchFocusRequest += 1
+        // 只有搜索页消费 ⌘F：其它常驻页拿到的是各自最后一次的请求值，不会被隐藏聚焦
+        tabFocusRequest[.search] = searchFocusRequest
     }
 
     /// 打开设置窗口。实现见文件末尾的 `SettingsOpener`：
@@ -601,7 +750,10 @@ private struct SidebarPanel: View {
     }
 
     let mode: Mode
+    /// 当前页（播放列表行按 id 认领高亮）
     let selected: ContentPage
+    /// 一级项的高亮归属：栈里那一层一级页（详情页归它下面压着的一级页）
+    let highlightRoot: ContentPage
     let userName: String
     let serverHost: String
     let onSelect: (ContentPage) -> Void
@@ -610,7 +762,6 @@ private struct SidebarPanel: View {
     let onOpenSettings: () -> Void
 
     @ObservedObject private var playlistStore = PlaylistStore.shared
-    @State private var playlistGroupExpanded = false
 
     private var isRail: Bool { mode != .full }
 
@@ -657,16 +808,31 @@ private struct SidebarPanel: View {
 
     private var logoRow: some View {
         HStack(spacing: Theme.Spacing.lg) {
-            RoundedRectangle(cornerRadius: Theme.Radius.md)
-                .fill(Theme.brandGradient)
-                .frame(width: 26, height: 26)
-                .overlay(
-                    Image(systemName: "music.note")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white)
-                )
-            Text("Overtone")
-                .textStyle(.body, weight: .semibold, color: Theme.textPrimary)
+            if Theme.isPaper {
+                // v4 版头（§2.4 谐波线母题）：～波形～ + 字距拉开的 OVERTONE，
+                // 不再用品牌渐变方块 —— 信号红只做波形（品牌图形首演），不做色块
+                HarmonicLines(count: 1)
+                    .stroke(
+                        Theme.Paper.signal,
+                        style: StrokeStyle(lineWidth: 1.5, lineJoin: .round)
+                    )
+                    .frame(width: 34, height: 12)
+                Text("Overtone")
+                    .textStyle(.caption, weight: .bold, color: Theme.Paper.ink)
+                    .tracking(2.6)
+                    .lineLimit(1)
+            } else {
+                RoundedRectangle(cornerRadius: Theme.Radius.md)
+                    .fill(Theme.brandGradient)
+                    .frame(width: 26, height: 26)
+                    .overlay(
+                        Image(systemName: "music.note")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.white)
+                    )
+                Text("Overtone")
+                    .textStyle(.body, weight: .semibold, color: Theme.textPrimary)
+            }
 
             Spacer(minLength: 0)
 
@@ -678,32 +844,13 @@ private struct SidebarPanel: View {
         .frame(height: 56)
     }
 
-    // MARK: 播放列表分组（默认折叠，6 项 + 显示全部）
+    // MARK: 播放列表分组（全部展开，超出靠侧栏自身滚动）
 
     @ViewBuilder
     private var playlistGroup: some View {
         let all = playlistStore.allPlaylists
-        let visible = playlistGroupExpanded ? all : Array(all.prefix(6))
 
-        HStack {
-            Text("我的列表")
-                .sectionCaption()
-            Spacer(minLength: 0)
-            if all.count > 6 {
-                Button {
-                    playlistGroupExpanded.toggle()
-                } label: {
-                    Text(playlistGroupExpanded ? "收起" : "显示全部")
-                        .textStyle(.caption, weight: .medium, color: Theme.brandText)
-                }
-                .buttonStyle(.plain)
-                .hitExpand(from: 16, to: 32)
-                .accessibilityLabel(playlistGroupExpanded ? "收起播放列表分组" : "显示全部播放列表")
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.top, Theme.Spacing.xl)
-        .padding(.bottom, Theme.Spacing.sm)
+        playlistGroupHeader
 
         if all.isEmpty {
             Text("暂无播放列表")
@@ -711,14 +858,39 @@ private struct SidebarPanel: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, Theme.Spacing.sm)
         } else {
-            // 新建 / 智能列表入口在「播放列表」一级页的顶栏，这里不重复放「管理播放列表」
-            ForEach(visible) { playlist in
-                navRow(
-                    page: .playlist(playlist),
+            // 新建 / 智能列表入口在「播放列表」一级页的顶栏，这里不重复放「管理播放列表」。
+            // 列表**全部列出**，不再有「显示全部 / 收起」：条数多到一屏放不下时，
+            // 由侧栏自身的 ScrollView 上下滚动（用户 2026-10-14）。
+            ForEach(all) { playlist in
+                SidebarNavRow(
                     icon: playlist.isSmart ? "sparkles" : "music.note",
-                    title: playlist.name
+                    title: playlist.name,
+                    isSelected: isPlaylistRowSelected(playlist),
+                    style: .full,
+                    action: { onSelect(.playlist(playlist)) }
                 )
             }
+        }
+    }
+
+    /// 分组标签（§4.3）：glass = caption 小型大写；paper = 规则标签（细线延伸至容器缘）。
+    /// 只在 paper 下换成 `RuleLabel`，glass 的排版一个像素都不动。
+    /// 不再挂「显示全部 / 收起」按钮 —— 列表恒定全展开（见 `playlistGroup`）。
+    @ViewBuilder
+    private var playlistGroupHeader: some View {
+        if Theme.isPaper {
+            RuleLabel("我的列表")
+                .padding(.top, Theme.Spacing.xl)
+                .padding(.bottom, Theme.Spacing.sm)
+        } else {
+            HStack {
+                Text("我的列表")
+                    .sectionCaption()
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, Theme.Spacing.xl)
+            .padding(.bottom, Theme.Spacing.sm)
         }
     }
 
@@ -751,7 +923,7 @@ private struct SidebarPanel: View {
         SidebarNavRow(
             icon: icon,
             title: title,
-            isSelected: selected.navRoot == page,
+            isSelected: isPrimarySelected(page),
             style: .full,
             action: { onSelect(page) }
         )
@@ -761,7 +933,7 @@ private struct SidebarPanel: View {
         SidebarNavRow(
             icon: icon,
             title: title,
-            isSelected: selected.navRoot == page,
+            isSelected: isPrimarySelected(page),
             style: .rail,
             action: { onSelect(page) }
         )
@@ -769,6 +941,30 @@ private struct SidebarPanel: View {
 
     private func railRow(icon: String, title: String, action: @escaping () -> Void) -> some View {
         SidebarNavRow(icon: icon, title: title, isSelected: false, style: .rail, action: action)
+    }
+
+    // MARK: 高亮归属（§4.3「选中 = 墨块填充 + 纸字 + 左缘红条」，一次只亮一行）
+
+    /// 一级项是否高亮：取栈里那一层一级页（`highlightRoot`）。
+    ///
+    /// 播放列表详情是例外：完整侧栏下高亮归「我的列表」里那一行 —— 用户点的是列表行，
+    /// 指示器就必须落在那一行上，而不能停在上方的一级「播放列表」（2026-10-14 修复）。
+    /// 只有图标栏退回一级「播放列表」：窄窗只有 5 个图标，没有列表行可亮。
+    /// （完整侧栏的列表恒定全展开，不存在「选中的那条没渲染出来」的情况。）
+    private func isPrimarySelected(_ page: ContentPage) -> Bool {
+        if case .playlist = selected {
+            return isRail && page == .playlists
+        }
+        return page == highlightRoot
+    }
+
+    /// 播放列表行是否高亮：当前页就是这一条列表（按 **id** 比，不整值比）。
+    ///
+    /// 为什么不整值比：详情页压在栈里的 `Playlist` 是入栈那一刻的快照，之后增删曲目 /
+    /// 服务器同步都会让 store 里的值变化，整值比较会让高亮在编辑过程中突然掉线。
+    private func isPlaylistRowSelected(_ playlist: Playlist) -> Bool {
+        guard case .playlist(let current) = selected else { return false }
+        return current.id == playlist.id
     }
 
     // MARK: 账号信息
@@ -781,13 +977,25 @@ private struct SidebarPanel: View {
             navRow(icon: "slider.horizontal.3", title: "设置", action: onOpenSettings)
 
             HStack(spacing: Theme.Spacing.md) {
-                Circle()
-                    .fill(Theme.brandGradient)
-                    .frame(width: 26, height: 26)
-                    .overlay(
-                        Text(String(userName.prefix(1)).uppercased())
-                            .textStyle(.caption, weight: .bold, color: .white)
-                    )
+                if Theme.isPaper {
+                    // paper 下头像块改墨底纸字方块（圆角 3）：品牌渐变在这里会变成一块信号红，
+                    // 违反「红只属于声音」
+                    RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                        .fill(Theme.Paper.ink)
+                        .frame(width: 26, height: 26)
+                        .overlay(
+                            Text(String(userName.prefix(1)).uppercased())
+                                .textStyle(.caption, weight: .bold, color: Theme.Paper.sheet)
+                        )
+                } else {
+                    Circle()
+                        .fill(Theme.brandGradient)
+                        .frame(width: 26, height: 26)
+                        .overlay(
+                            Text(String(userName.prefix(1)).uppercased())
+                                .textStyle(.caption, weight: .bold, color: .white)
+                        )
+                }
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(userName)
@@ -840,7 +1048,8 @@ private struct SidebarNavRow: View {
         .onHover { hovered = $0 }
         .animation(Theme.Motion.micro, value: hovered)
         .animation(Theme.Motion.micro, value: isSelected)
-        .help(title)
+        // 图标栏只显示图标，标签走 tooltip；完整侧栏（尤其 paper 下）已经有文字，再挂 tooltip 是重复
+        .modifier(SidebarTooltip(text: title, enabled: !Theme.isPaper || style == .rail))
         .accessibilityLabel(title)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
@@ -854,36 +1063,107 @@ private struct SidebarNavRow: View {
                     .font(.system(size: 13, weight: .medium))
                     .frame(width: 18)
                 Text(title)
-                    .textStyle(.bodySM, weight: isSelected ? .semibold : .medium)
+                    .textStyle(.bodySM, weight: isSelected ? .semibold : .medium, color: labelColor)
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 10)
             .frame(height: 36)
-            // 选中 = brandTint 底 + brandText 文字 + 字重 600（§4.5 列表行状态机）
-            .foregroundStyle(isSelected ? Theme.brandText : Theme.textPrimary)
+            // 选中 = 墨块填充 + 纸字（§4.3）；glass 是 brandTint 底 + 强调色图标 + 深色字
+            .foregroundStyle(foreground)
             .background(
                 RoundedRectangle(cornerRadius: Theme.Radius.sm)
                     .fill(fill)
             )
+            .modifier(SelectionEdgeBar(isSelected: isSelected))
 
         case .rail:
             // 图标栏只显示图标（名称走 tooltip 与 VoiceOver）
             Image(systemName: icon)
                 .font(.system(size: 20, weight: .medium))
                 .frame(width: 44, height: 44)
-                .foregroundStyle(isSelected ? Theme.brandText : Theme.textSecondary)
+                .foregroundStyle(foreground)
                 .background(
                     RoundedRectangle(cornerRadius: Theme.Radius.sm)
                         .fill(fill)
                 )
+                .modifier(SelectionEdgeBar(isSelected: isSelected))
         }
     }
 
+    /// 文字色：paper 下选中 = 墨块上的纸字、静止 = ink-2、hover 提亮到 ink；glass 保持原取值
+    private var foreground: Color {
+        if Theme.isPaper {
+            if isSelected { return Theme.Paper.sheet }
+            return hovered ? Theme.Paper.ink : Theme.Paper.ink2
+        }
+        if isSelected { return Theme.brandText }
+        return style == .rail ? Theme.textSecondary : Theme.textPrimary
+    }
+
+    /// 标签色 —— 与图标色**分开**给。
+    ///
+    /// - 纸墨：跟图标同色（选中 = 墨块上的纸字 `Paper.sheet`，静止 = `ink2`，hover = `ink`，§4.3「选中 = 墨块
+    ///   填充 + 纸字」）。旧实现让 `textStyle` 兜底成 `textPrimary` = 墨，**墨块上的墨字**：选中行文字
+    ///   整个消失（2026-10-14 截图复现，issue「纸墨主题选中后无法看清文字」）。
+    /// - 玻璃：标签保持既有取值 `textPrimary`，只有图标走 `foreground` 的强调色。这是**故意的**：
+    ///   README 与 v3 契约把玻璃模式的取值冻结成「与 v3 逐字节一致」，v3 的实机截图里选中项就是
+    ///   深色字 + 强调色图标；v3 预览 CSS（`.sb-item.active{color:var(--brand-text)}`）与本文
+    ///   旧注释说的是强调色字，两者不一致 —— 这次只修纸墨，不改玻璃观感（要不要统一另议）。
+    ///   显式传色的另一个好处：本行不受 `textStyle` 默认语义（`color == nil` 时继承外层）变化影响。
+    private var labelColor: Color {
+        Theme.isPaper ? foreground : Theme.textPrimary
+    }
+
     private var fill: AnyShapeStyle {
+        if Theme.isPaper {
+            if isSelected { return AnyShapeStyle(Theme.Paper.ink) }
+            if hovered { return AnyShapeStyle(Theme.Paper.hover) }
+            return AnyShapeStyle(Color.clear)
+        }
         if isSelected { return AnyShapeStyle(Theme.brandTint) }
         if hovered { return AnyShapeStyle(Theme.surfaceHover) }
         return AnyShapeStyle(Color.clear)
+    }
+}
+
+/// 侧栏 tooltip 开关：`enabled == false` 时完全不挂 `.help`，
+/// 免得纸上侧栏弹出与行内文字重复的气泡（§4.3「tooltip = 标签（宽窗不挂）」）。
+private struct SidebarTooltip: ViewModifier {
+    let text: String
+    let enabled: Bool
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content.help(text)
+        } else {
+            content
+        }
+    }
+}
+
+/// 选中行左缘 3px 信号红条（§4.3 / §4.4）。
+///
+/// 为什么用 overlay 而不是 `inset` 阴影：阴影色无法走动态令牌缓存（会破坏 SwiftUI 的
+/// 相等性跳过），而这里只是一块矩形。先 overlay 再 clip，方块的直角才会被行圆角裁掉。
+private struct SelectionEdgeBar: ViewModifier {
+    let isSelected: Bool
+
+    func body(content: Content) -> some View {
+        if Theme.isPaper {
+            content
+                .overlay(alignment: .leading) {
+                    if isSelected {
+                        Rectangle()
+                            .fill(Theme.Paper.signal)
+                            .frame(width: 3)
+                            .accessibilityHidden(true)
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.sm))
+        } else {
+            content
+        }
     }
 }
 
@@ -1013,5 +1293,81 @@ private struct OpenSettingsCatcher: View {
             .frame(width: 0, height: 0)
             .onAppear { SettingsOpener.shared.action = { openSettings() } }
             .accessibilityHidden(true)
+    }
+}
+
+// MARK: - 页面级纸墨排版辅助（T4 各页共用）
+
+/// paper 下的「卡片级衬线标题」。
+///
+/// 契约的字形映射只把 display / title1–3 切到衬线，而预览里 15pt 的续播卡标题、
+/// 播放列表行标题同样是衬线（§2.2「专辑名、艺人名」）。这里按**令牌字号**取衬线字形
+/// ——不新增字号常量，动态字号缩放基准与 `textStyle` 同源；glass 分支原样走 `textStyle`，
+/// 取值与改动前完全一致。
+struct PaperSerifTitle: ViewModifier {
+    let style: Theme.TextStyle
+    let weight: Font.Weight
+    let color: Color?
+
+    @ScaledMetric private var scale: CGFloat
+
+    init(_ style: Theme.TextStyle, weight: Font.Weight = .semibold, color: Color? = nil) {
+        self.style = style
+        self.weight = weight
+        self.color = color
+        _scale = ScaledMetric(wrappedValue: 1, relativeTo: style.relativeTo)
+    }
+
+    func body(content: Content) -> some View {
+        if Theme.isPaper {
+            content
+                .font(.system(size: style.size * scale, weight: weight, design: .serif))
+                .lineSpacing(style.lineSpacing * scale)
+                .foregroundStyle(color ?? Theme.textPrimary)
+        } else {
+            // 显式补上 `Theme.textPrimary`：`textStyle` 自 2026-10-14 起在 `color == nil`
+            // 时**不再**写颜色（改为继承外层，见 `ScaledTextStyleModifier`）。这里补回默认值，
+            // 玻璃模式的取值才与改动前逐像素一致 —— 本类型的契约就是「glass 分支原样走 textStyle」。
+            content.textStyle(style, weight: weight, color: color ?? Theme.textPrimary)
+        }
+    }
+}
+
+extension View {
+    /// 卡片级衬线标题（paper）/ 原字号令牌（glass）
+    func paperSerifTitle(
+        _ style: Theme.TextStyle,
+        weight: Font.Weight = .semibold,
+        color: Color? = nil
+    ) -> some View {
+        modifier(PaperSerifTitle(style, weight: weight, color: color))
+    }
+}
+
+/// 封面外观（§4.6）。
+///
+/// glass = `elevation(level)`（深色下该修饰符会自动补 `borderSubtle` 描边；`level == nil`
+/// 表示 glass 侧本来就没有投影，原样返回）；paper = 印刷套封内描边 + 零投影 ——
+/// 投影虽然已被 Theme 层关掉，但**深色下那圈描边**仍在，与套封内框叠在一起会变成双框，
+/// 所以这里必须整体分支。
+struct PagesCoverChrome: ViewModifier {
+    let radius: CGFloat
+    let level: Theme.Elevation?
+
+    func body(content: Content) -> some View {
+        if Theme.isPaper {
+            content.paperCoverFrame(true, cornerRadius: radius)
+        } else if let level {
+            content.elevation(level, cornerRadius: radius)
+        } else {
+            content
+        }
+    }
+}
+
+extension View {
+    /// 封面统一外观：paper 套封 / glass 投影（`level: nil` = glass 侧无投影）
+    func pagesCoverChrome(radius: CGFloat, level: Theme.Elevation? = .e1) -> some View {
+        modifier(PagesCoverChrome(radius: radius, level: level))
     }
 }

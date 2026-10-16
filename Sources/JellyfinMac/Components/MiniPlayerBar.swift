@@ -23,7 +23,7 @@ struct MiniPlayerBar: View {
                 let layout = BarLayout(width: geo.size.width)
                 // 单行三区（§2 骨架）：[封面 曲名 ≤220] [控制 + 进度] [音量 队列]
                 HStack(spacing: layout.zoneSpacing) {
-                    trackInfo(track)
+                    trackInfo(track, showsFullOnAir: layout.showsVolume)
 
                     Spacer(minLength: 0)
 
@@ -40,7 +40,8 @@ struct MiniPlayerBar: View {
                 .padding(.horizontal, layout.horizontalPadding)
                 .frame(width: geo.size.width, height: geo.size.height)
             }
-            .frame(height: Theme.Size.playerBarHeightGlass)
+            // paper 用实体版高度 68（§5 骨架图：迷你播放条 68 宽窄一致）；玻璃保持 60
+            .frame(height: Theme.isPaper ? Theme.Size.playerBarHeight : Theme.Size.playerBarHeightGlass)
             // 播放条属于 chrome 层：悬浮玻璃面板（§7.2 规则 2），高度宽窄一致（§6 W0）
             .glassPanel(.thick, cornerRadius: Theme.Size.panelRadius, elevation: .e2)
             .padding(.horizontal, Theme.Size.panelGap)
@@ -51,13 +52,15 @@ struct MiniPlayerBar: View {
 
     // MARK: - 左区：封面 + 曲目信息
 
-    private func trackInfo(_ track: BaseItemDto) -> some View {
+    private func trackInfo(_ track: BaseItemDto, showsFullOnAir: Bool) -> some View {
         Button(action: onOpen) {
             HStack(spacing: Theme.Spacing.lg) {
                 RemoteImage(url: track.artworkURL(width: 96), contentMode: .fill)
-                    .frame(width: Theme.Size.playerCover, height: Theme.Size.playerCover)
-                    // 全部封面统一圆角 R=10（§7.2 规则 2）
-                    .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
+                    .frame(width: Theme.isPaper ? 44 : Theme.Size.playerCover,
+                           height: Theme.isPaper ? 44 : Theme.Size.playerCover)
+                    // 全部封面统一圆角 R=10（§7.2 规则 2）；paper 改 2pt 印刷套封（§4.6）
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.isPaper ? Theme.Radius.cover : Theme.Radius.md))
+                    .paperCoverFrame(Theme.isPaper)
                     .id(track.id)
                     .transition(.scale(scale: 0.7).combined(with: .opacity))
 
@@ -74,6 +77,12 @@ struct MiniPlayerBar: View {
                             .textStyle(.caption, color: Theme.textSecondary)
                             .lineLimit(1)
                     }
+                }
+
+                // paper：ON AIR 灯牌（§2.4）。窄条降级成只有红方块 —— 播放条可用宽度
+                // 由侧栏拖拽决定，宽度不够时优先保住标题与控制区
+                if Theme.isPaper {
+                    OnAirBadge(isPlaying: music.isPlaying, compact: !showsFullOnAir)
                 }
             }
             // 左区上限 220（设计稿），窄窗可一路压缩到「封面 + 少量标题」，
@@ -122,10 +131,17 @@ struct MiniPlayerBar: View {
                             .scaleEffect(music.isPlaying ? 0.5 : 1)
                     }
                     .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.isPaper ? Theme.Paper.sheet : .white)
                     .frame(width: 36, height: 36)
-                    .background(Circle().fill(Theme.brandGradient))
-                    .contentShape(Circle())
+                    .background {
+                        // paper：主播放键是墨块方块（§4.1 主按钮 = 墨底纸字），不用玻璃渐变圆
+                        if Theme.isPaper {
+                            RoundedRectangle(cornerRadius: Theme.Radius.sm).fill(Theme.Paper.ink)
+                        } else {
+                            Circle().fill(Theme.brandGradient)
+                        }
+                    }
+                    .contentShape(Theme.isPaper ? AnyShape(Rectangle()) : AnyShape(Circle()))
                     .animation(Theme.Motion.spring, value: music.isPlaying)
                 }
                 .buttonStyle(.plain)
@@ -191,7 +207,51 @@ struct MiniPlayerBar: View {
     }
 
     // MARK: - 进度条（4pt 轨道，hover 6pt + 把手 10；可键盘 ±5s 微调）
+    //
+    // paper 换成 VU 迷你段条（§4.5）：段高 4，整条可点击 / 拖动跳转，键盘 ±5s 不变。
+    @ViewBuilder
     private var progressBar: some View {
+        if Theme.isPaper {
+            paperVUProgress
+        } else {
+            glassProgressBar
+        }
+    }
+
+    /// paper：VU 迷你段条。整条可点击跳转（DragGesture minimumDistance 0 同时覆盖点击与拖动），
+    /// 键盘 / VoiceOver 的 ±5s 可调动作与 glass 完全一致
+    private var paperVUProgress: some View {
+        GeometryReader { geo in
+            VUMiniProgress(value: progressRatio, isPlaying: music.isPlaying)
+                .frame(height: 10)
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            music.scrub(ratio: value.location.x / max(geo.size.width, 1))
+                        }
+                        .onEnded { _ in
+                            music.endScrub()
+                        }
+                )
+        }
+        .frame(height: 12)
+        .accessibilityElement()
+        .accessibilityLabel("播放进度")
+        .accessibilityValue("\(formatPlaybackTime(progress.position)) / \(formatPlaybackTime(progress.duration))")
+        .accessibilityAdjustableAction { direction in
+            let step = 5.0
+            switch direction {
+            case .increment: music.seekTo(position: progress.position + step)
+            case .decrement: music.seekTo(position: progress.position - step)
+            @unknown default: break
+            }
+        }
+    }
+
+    /// glass（v3）形态：与改动前逐字一致
+    private var glassProgressBar: some View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
                 Capsule()

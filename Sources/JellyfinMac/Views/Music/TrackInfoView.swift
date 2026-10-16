@@ -19,6 +19,8 @@ struct TrackInfoView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(track.name ?? "")
                         .textStyle(.bodySM, weight: .semibold, color: Theme.textPrimary)
+                        // paper：曲名走衬线（信息面板的「印刷」气质，§2.2）
+                        .fontDesign(Theme.isPaper ? .serif : .default)
                         .lineLimit(2)
                     Text([track.album, track.albumArtist].compactMap { $0 }.joined(separator: " · "))
                         .textStyle(.caption, color: Theme.textSecondary)
@@ -75,7 +77,30 @@ struct TrackInfoView: View {
         .task { await vm.load() }
     }
 
+    /// paper（§6.8 思路：设置 / 信息面板像设备说明书）：标签列定宽 + hairline 行线，数值走 mono
+    @ViewBuilder
     private func infoRow(_ label: String, _ value: String) -> some View {
+        if Theme.isPaper {
+            HStack(spacing: Theme.Spacing.lg) {
+                Text(label)
+                    .textStyle(.footnote, color: Theme.Paper.ink2)
+                    .frame(width: 72, alignment: .leading)
+                Text(value)
+                    .textStyle(.mono, color: Theme.Paper.ink)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(minHeight: 26)
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(Theme.Paper.hairline).frame(height: 1)
+            }
+            .accessibilityElement(children: .combine)
+        } else {
+            glassInfoRow(label, value)
+        }
+    }
+
+    /// glass（v3）形态：与改动前逐字一致
+    private func glassInfoRow(_ label: String, _ value: String) -> some View {
         HStack(spacing: Theme.Spacing.md) {
             Text(label)
                 .textStyle(.footnote, color: Theme.textSecondary)

@@ -20,20 +20,21 @@ final class AppState: ObservableObject {
         static let serverURL = "serverURL"
         static let token = "token"
         static let username = "username"
-        static let password = "password"
+        /// 历史遗留：密码曾经明文写在 UserDefaults 里。
+        /// 现在只在钥匙串写入成功之前作为兜底保留，读到即迁移。
+        static let legacyPassword = "password"
     }
     private let defaults = UserDefaults.standard
     /// 会话恢复只执行一次（视图重建/重复 task 时避免并发竞态）
     private var didAttemptRestore = false
 
+    /// 会话凭据是否还在（token 在 UserDefaults，密码在钥匙串）
     var hasSavedSession: Bool {
         defaults.string(forKey: Keys.serverURL) != nil && defaults.string(forKey: Keys.token) != nil
     }
 
     func login(server rawServer: String, username: String, password: String) async throws {
-        var server = rawServer.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !server.contains("://") { server = "http://" + server }
-        while server.hasSuffix("/") { server.removeLast() }
+        let server = normalize(server: rawServer)
         guard let url = URL(string: server) else { throw APIError.invalidURL }
 
         APIClient.shared.baseURL = url
@@ -43,11 +44,17 @@ final class AppState: ObservableObject {
         APIClient.shared.user = response.user
         defaults.set(server, forKey: Keys.serverURL)
         defaults.set(response.accessToken, forKey: Keys.token)
-        // 保存凭据：下次启动自动登录（Keychain 为主，UserDefaults 兜底）
         defaults.set(username, forKey: Keys.username)
-        defaults.set(password, forKey: Keys.password)
-        // 钥匙串写入是同步 XPC（1–10ms）：放到后台，不挡住登录后的界面切换
-        await KeychainHelper.saveAsync(password: password, account: username)
+        // 密码只进钥匙串：**写入成功才**清掉旧版遗留在 UserDefaults 里的明文，
+        // 否则保留兜底（钥匙串被拒绝访问时自动登录还能用）。
+        //
+        // 访问 token 不进钥匙串是有意为之：本应用是 ad-hoc 签名，重建后 cdhash 变化，
+        // 钥匙串 ACL 就会失配并弹一次系统授权框——token 读写在启动路径上，
+        // 那等于每次重新构建都弹一次密码框。token 可用服务端吊销，留在 default 里
+        // （0600 权限的 plist）与改动前的行为一致，见 docs/build-notes.md。
+        if await KeychainHelper.saveAsync(password: password, account: username) {
+            defaults.removeObject(forKey: Keys.legacyPassword)
+        }
         user = response.user
         phase = .signedIn
     }
@@ -56,6 +63,8 @@ final class AppState: ObservableObject {
     func restoreSession() async {
         guard !didAttemptRestore else { return }
         defer { didAttemptRestore = true }
+        // 0. 旧版遗留的明文密码：搬进钥匙串（写入成功才删除明文，避免迁移失败丢凭据）
+        await migrateLegacyPassword()
         // 1. 尝试 token 恢复
         if let server = defaults.string(forKey: Keys.serverURL),
            let url = URL(string: server),
@@ -77,8 +86,7 @@ final class AppState: ObservableObject {
            let server = defaults.string(forKey: Keys.serverURL) {
             // 钥匙串读取是同步 XPC：这是启动路径，必须挪出主线程（首帧之前）
             let stored = await KeychainHelper.readAsync(account: username)
-            let password = stored ?? defaults.string(forKey: Keys.password)
-            if let password {
+            if let password = stored ?? defaults.string(forKey: Keys.legacyPassword) {
                 do {
                     try await login(server: server, username: username, password: password)
                     return
@@ -92,6 +100,16 @@ final class AppState: ObservableObject {
         user = nil
         libraries = []
         phase = .signedOut
+    }
+
+    /// 一次性迁移：旧版本把密码明文写在 UserDefaults 里。
+    /// 读到即搬进钥匙串，并在**写入成功之后**才删除明文条目。
+    private func migrateLegacyPassword() async {
+        guard let username = defaults.string(forKey: Keys.username),
+              let legacy = defaults.string(forKey: Keys.legacyPassword) else { return }
+        if await KeychainHelper.saveAsync(password: legacy, account: username) {
+            defaults.removeObject(forKey: Keys.legacyPassword)
+        }
     }
 
     /// 设置里关掉「启动时自动连接」：直接停在登录页，不尝试恢复会话（保留已存凭据供手动登录）
@@ -125,11 +143,23 @@ final class AppState: ObservableObject {
         defaults.removeObject(forKey: Keys.serverURL)
         defaults.removeObject(forKey: Keys.token)
         defaults.removeObject(forKey: Keys.username)
-        defaults.removeObject(forKey: Keys.password)
+        // 历史遗留的明文条目一并清掉
+        defaults.removeObject(forKey: Keys.legacyPassword)
         phase = .signedOut
         // 钥匙串删除也是同步 XPC：先切到登录页，再在后台清理凭据
-        if let account {
-            Task { await KeychainHelper.deleteAsync(account: account) }
+        Task {
+            if let account {
+                await KeychainHelper.deleteAsync(account: account)
+            }
+            await KeychainHelper.deleteAsync(account: KeychainHelper.tokenAccount)
         }
+    }
+
+    /// 服务器地址规范化：补协议、去尾部斜杠
+    private func normalize(server rawServer: String) -> String {
+        var server = rawServer.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !server.contains("://") { server = "http://" + server }
+        while server.hasSuffix("/") { server.removeLast() }
+        return server
     }
 }

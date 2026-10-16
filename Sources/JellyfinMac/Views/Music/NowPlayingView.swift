@@ -19,8 +19,9 @@ struct NowPlayingView: View {
     @State private var lyricsTrackId: String?
     /// 窄窗待播抽屉
     @State private var queueDrawerOpen = false
-    /// 待播清单显隐（宽窗）
-    @State private var showQueueColumn = true
+    /// 待播清单显隐（宽窗）—— **默认收起**（用户 2026-10-14：「正在播放页默认不展示待播清单」），
+    /// 顶栏右端的列表按钮随时展开；展开状态只活在本次会话里，不落设置
+    @State private var showQueueColumn = false
     /// 封面取色（氛围层 §4.1）；nil → 回落品牌色系
     @State private var palette: Palette?
     /// 主播放键 hover（放大反馈）
@@ -84,6 +85,8 @@ struct NowPlayingView: View {
         HStack(spacing: Theme.Spacing.md) {
             Text("正在播放")
                 .textStyle(.title4, color: Theme.textPrimary)
+                // paper：页面标题走衬线（§2.2）；glass 下 .default 与改动前同值
+                .fontDesign(Theme.isPaper ? .serif : .default)
                 .accessibilityAddTraits(.isHeader)
 
             Spacer(minLength: 0)
@@ -151,11 +154,18 @@ struct NowPlayingView: View {
         return VStack(spacing: Theme.Spacing.xxl) {
             coverLyricsSwitch
 
-            if showLyrics {
-                LyricsPane(lyrics: lyrics, failed: lyricsFailed)
-            } else {
-                coverPane(maxCover: maxCover)
-            }
+            // 封面 / 歌词共用**同一块**位置：封面永远留在布局里（切到歌词时只是透明），
+            // 歌词走 `overlay` —— overlay 不影响父视图尺寸，于是这一块的高度恒等于封面块，
+            // 切上切下都不会把上面的分段控件与下面的进度条 / 控制键顶走
+            // （用户 2026-10-14：「切换封面和歌词时，上下两块保持不动」）。
+            coverPane(maxCover: maxCover)
+                .opacity(showLyrics ? 0 : 1)
+                .accessibilityHidden(showLyrics)
+                .overlay {
+                    if showLyrics {
+                        LyricsPane(lyrics: lyrics, failed: lyricsFailed)
+                    }
+                }
 
             NowPlayingProgressSection()
                 .frame(maxWidth: 480)
@@ -207,7 +217,54 @@ struct NowPlayingView: View {
     }
 
     /// 封面 + 曲名行（频谱 + 22/700）+ 艺人 · 专辑（13 textSecondary）
+    @ViewBuilder
     private func coverPane(maxCover: CGFloat) -> some View {
+        if Theme.isPaper {
+            paperCoverPane(maxCover: maxCover)
+        } else {
+            glassCoverPane(maxCover: maxCover)
+        }
+    }
+
+    /// paper（§6.6）：大封面 280 + 印刷套封框、曲名 hero 衬线、ON AIR 灯牌
+    private func paperCoverPane(maxCover: CGFloat) -> some View {
+        let side = min(maxCover, 280)
+
+        return VStack(spacing: 18) {
+            RemoteImage(url: music.currentTrack?.artworkURL(width: 640), contentMode: .fill)
+                .frame(width: side, height: side)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.cover))
+                .paperCoverFrame(true)
+                .id(music.currentTrack?.id)
+                .transition(.scale(scale: 0.94).combined(with: .opacity))
+                .scaleEffect(appeared || reduceMotion ? 1 : 0.96)
+                .animation(reduceMotion ? Theme.Motion.reduced : Theme.Motion.spring, value: appeared)
+
+            VStack(spacing: 5) {
+                // 当前播放状态不只靠颜色：ON AIR 徽标 + 下方 VU 段条 + 5 键控制
+                if music.currentTrack != nil {
+                    OnAirBadge(isPlaying: music.isPlaying)
+                }
+                Text(music.currentTrack?.name ?? "未在播放")
+                    .textStyle(.display, color: Theme.Paper.ink)
+                    .fontDesign(.serif)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text([music.currentTrack?.albumArtist, music.currentTrack?.album]
+                    .compactMap { $0 }.joined(separator: " · "))
+                    .textStyle(.bodySM, color: Theme.Paper.ink2)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: max(side, 320))
+        }
+        .frame(maxWidth: .infinity)
+        .transition(.opacity)
+    }
+
+    /// glass（v3）形态：与改动前逐字一致
+    private func glassCoverPane(maxCover: CGFloat) -> some View {
         VStack(spacing: 18) {
             RemoteImage(url: music.currentTrack?.artworkURL(width: 640), contentMode: .fill)
                 .frame(width: maxCover, height: maxCover)
@@ -284,12 +341,19 @@ struct NowPlayingView: View {
                         .scaleEffect(music.isPlaying ? 0.5 : 1)
                 }
                 .font(.system(size: 20, weight: .bold))
-                .foregroundStyle(.white)
+                .foregroundStyle(Theme.isPaper ? Theme.Paper.sheet : .white)
                 .frame(width: 56, height: 56)
-                .background(Circle().fill(Theme.brandGradient))
+                .background {
+                    // paper：主播放键是墨块方块（§4.1），玻璃侧保持渐变圆
+                    if Theme.isPaper {
+                        RoundedRectangle(cornerRadius: Theme.Radius.sm).fill(Theme.Paper.ink)
+                    } else {
+                        Circle().fill(Theme.brandGradient)
+                    }
+                }
                 .elevation(.e2)
                 .scaleEffect(playHovered && !reduceMotion ? 1.04 : 1)
-                .contentShape(Circle())
+                .contentShape(Theme.isPaper ? AnyShape(Rectangle()) : AnyShape(Circle()))
                 .animation(Theme.Motion.spring, value: music.isPlaying)
                 .animation(Theme.Motion.micro, value: playHovered)
             }
@@ -351,7 +415,28 @@ struct NowPlayingView: View {
     }
 
     /// 标题「待播清单 · N 首」；有收起动作时右侧补一个图标按钮
+    @ViewBuilder
     private func queueHeader(count: Int, collapse: (() -> Void)? = nil) -> some View {
+        if Theme.isPaper {
+            // paper：印刷规则标签（§4.7 ──── 标题 ──── 右侧操作跟在细线后）
+            RuleLabel("待播清单") {
+                HStack(spacing: Theme.Spacing.md) {
+                    Text("\(count) 首")
+                        .textStyle(.monoSM, color: Theme.Paper.ink3)
+                    if let collapse {
+                        PlainIconButton(systemName: "chevron.down", label: "收起待播清单", action: collapse)
+                    }
+                }
+            }
+            .padding(.horizontal, Theme.Spacing.xs)
+            .accessibilityAddTraits(.isHeader)
+        } else {
+            glassQueueHeader(count: count, collapse: collapse)
+        }
+    }
+
+    /// glass（v3）形态：与改动前逐字一致
+    private func glassQueueHeader(count: Int, collapse: (() -> Void)?) -> some View {
         HStack(spacing: Theme.Spacing.md) {
             HStack(spacing: Theme.Spacing.xs) {
                 Text("待播清单")
@@ -396,8 +481,14 @@ struct NowPlayingView: View {
         }
         .padding(Theme.Spacing.lg)
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(shape.fill(Theme.surface))
+        // paper：待播清单不做成卡片（与主区同为纸面），改用一条竖细线分隔（§6.6）
+        .background(shape.fill(Theme.isPaper ? .clear : Theme.surface))
         .clipShape(shape)
+        .overlay(alignment: .leading) {
+            if Theme.isPaper {
+                Rectangle().fill(Theme.Paper.hairline).frame(width: 1)
+            }
+        }
         .elevation(.e1, cornerRadius: Theme.Radius.lg)
     }
 
@@ -554,6 +645,11 @@ struct NowPlayingView: View {
     /// 用与封面同一个 URL 取图（命中同一份缓存），取色失败回落品牌色系。
     @MainActor
     private func loadPalette() async {
+        // paper 不渲染氛围层：封面取色（一次额外解码）纯属浪费
+        guard !Theme.isPaper else {
+            palette = nil
+            return
+        }
         guard let track = music.currentTrack, let url = track.artworkURL(width: 640) else {
             palette = nil
             return
@@ -565,8 +661,11 @@ struct NowPlayingView: View {
 
 // MARK: - 队列行（待播清单 / 窄窗抽屉 / 播放队列面板共用）
 
-/// 列表行（§4.5）：高 52、圆角 6、hover `surfaceHover`、
+/// 队列行（待播清单 / 窄窗抽屉 / 播放队列面板共用）。
+///
+/// glass：列表行（§4.5）高 52、圆角 6、hover `surfaceHover`、
 /// 当前行 `surfaceSelected` + 3pt 指示条 + 频谱，封面 36 圆角 10。
+/// paper：点线行（§4.4）48pt —— 走 `PaperTrackRow`，当前行红条 + ON AIR + VU 迷你段条。
 struct QueueRow: View {
     let track: BaseItemDto
     let index: Int
@@ -583,6 +682,60 @@ struct QueueRow: View {
     @FocusState private var focused: Bool
 
     var body: some View {
+        if Theme.isPaper {
+            paperBody
+        } else {
+            glassBody
+        }
+    }
+
+    /// paper（§4.4 点线行 48）：与详情表 / 曲目列表同一个 `PaperTrackRow`，
+    /// 当前曲左缘红条 + ON AIR 徽标 + 时长位换成 VU 迷你段条
+    private var paperBody: some View {
+        PaperTrackRow(
+            track: track,
+            index: index,
+            showsIndex: showsIndex,
+            isCurrent: isCurrent,
+            isPlaying: isPlaying,
+            rowHeight: PaperRowMetrics.listRowHeight,
+            horizontalPadding: Theme.Spacing.md,
+            // 队列面板最窄 320pt：徽标降级成只有红方块，避免把标题挤没
+            compactBadge: true,
+            onTap: onTap
+        ) { revealed in
+            HStack(spacing: Theme.Spacing.xxs) {
+                if let onRemove {
+                    Button(action: onRemove) {
+                        Image(systemName: "minus.circle")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Theme.Paper.ink2)
+                            .frame(width: Theme.Size.iconButtonSm, height: Theme.Size.iconButtonSm)
+                            .contentShape(Rectangle())
+                            .hitExpand(from: Theme.Size.iconButtonSm)
+                    }
+                    .buttonStyle(.plain)
+                    .opacity(revealed ? 1 : 0)
+                    .allowsHitTesting(revealed)
+                    .help(isCurrent ? "正在播放，不可移除" : "从队列移除")
+                    .accessibilityLabel(isCurrent ? "正在播放，不可移除" : "从队列移除")
+                }
+
+                if showsHandle {
+                    Image(systemName: "line.3.horizontal")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Theme.Paper.ink3)
+                        .frame(width: 16, height: 16)
+                        .hitExpand(from: 16)
+                        .help("拖动排序")
+                        .accessibilityHidden(true)
+                }
+            }
+        }
+    }
+
+    /// glass（v3）形态：与改动前逐字一致
+    private var glassBody: some View {
         HStack(spacing: Theme.Spacing.md) {
             Button(action: onTap) {
                 HStack(spacing: Theme.Spacing.lg) {
@@ -711,6 +864,16 @@ extension NowPlayingView {
         @Environment(\.appReduceTransparency) private var reduceTransparency
 
         var body: some View {
+            // paper 无玻璃可透、也没有「舞台灯光」母题，整层不渲染（§7 边界状态）
+            if Theme.isPaper {
+                EmptyView()
+            } else {
+                glassLayer
+            }
+        }
+
+        /// glass（v3）形态：与改动前逐字一致
+        private var glassLayer: some View {
             GeometryReader { geo in
                 ZStack {
                     blob(
@@ -869,6 +1032,67 @@ private struct NowPlayingProgressSection: View {
     @State private var progressHovered = false
 
     var body: some View {
+        if Theme.isPaper {
+            paperBody
+        } else {
+            glassBody
+        }
+    }
+
+    /// paper（§6.6）：VU 大段条 + 左右 mono 时间码
+    private var paperBody: some View {
+        HStack(spacing: Theme.Spacing.lg) {
+            Text(formatPlaybackTime(progress.position))
+                .textStyle(.monoSM, color: Theme.Paper.ink2)
+                .frame(width: 44, alignment: .leading)
+
+            paperScrubBar
+
+            Text(formatPlaybackTime(progress.duration))
+                .textStyle(.monoSM, color: Theme.Paper.ink2)
+                .frame(width: 44, alignment: .trailing)
+        }
+    }
+
+    /// paper：VU 大段条（§4.5 段高 10）；拖动与键盘 ±5s 与 glass 同构
+    private var paperScrubBar: some View {
+        GeometryReader { geo in
+            VUProgress(
+                value: progressRatio,
+                segments: 10,
+                height: 10,
+                isPlaying: MusicPlayerModel.shared.isPlaying
+            )
+            .frame(height: 12)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        MusicPlayerModel.shared.scrub(ratio: value.location.x / max(geo.size.width, 1))
+                    }
+                    .onEnded { _ in
+                        MusicPlayerModel.shared.endScrub()
+                    }
+            )
+        }
+        .frame(height: 16)
+        .accessibilityElement()
+        .accessibilityLabel("播放进度")
+        .accessibilityValue("\(formatPlaybackTime(progress.position)) / \(formatPlaybackTime(progress.duration))")
+        // 键盘 / VoiceOver 微调 ±5s
+        .accessibilityAdjustableAction { direction in
+            let step = 5.0
+            switch direction {
+            case .increment: MusicPlayerModel.shared.seekTo(position: progress.position + step)
+            case .decrement: MusicPlayerModel.shared.seekTo(position: progress.position - step)
+            @unknown default: break
+            }
+        }
+    }
+
+    /// glass（v3）形态：与改动前逐字一致
+    private var glassBody: some View {
         HStack(spacing: 10) {
             Text(formatPlaybackTime(progress.position))
                 .textStyle(.monoSM, color: Theme.textSecondary)
@@ -985,7 +1209,9 @@ private struct LyricsPane: View {
                     }
                 }
                 .frame(maxWidth: 420)
-                .frame(height: 260)
+                // 填满封面块那一格：歌词与封面同一块位置（见 `mainCard` 的注释），
+                // 不给固定高度，窗口越高看得越多，歌词自己在内部滚动
+                .frame(maxHeight: .infinity)
             } else if failed {
                 EmptyState(systemImage: "text.alignleft", title: "没有找到歌词")
             } else {

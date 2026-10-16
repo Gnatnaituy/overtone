@@ -186,21 +186,42 @@ struct PrimaryButtonStyle: ButtonStyle {
     @Environment(\.appReduceMotion) private var reduceMotion
     var compact = false
 
+    @ViewBuilder
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .textStyle(.body, weight: .medium, color: Theme.textOnAccent)
-            .padding(.horizontal, compact ? 14 : 20)
-            .frame(height: compact ? Theme.Size.buttonHeightSm : Theme.Size.buttonHeight)
-            .background(
-                RoundedRectangle(cornerRadius: Theme.Radius.md)
-                    .fill(Theme.brandGradient)
-                    .brightness(configuration.isPressed ? -0.06 : 0)
-            )
-            .elevation(.e1)
-            .opacity(isEnabled ? 1 : 0.45)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
-            .animation(Theme.Motion.micro, value: configuration.isPressed)
-            .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
+        if Theme.isPaper {
+            // v4 §4.1：墨底纸字（深色主题即自动反色）+ 高 32/28 + 圆角 3；
+            // 主按钮是「红只属于声音」之外唯一的实心墨块，所以纸墨下不再用渐变与投影。
+            PaperHoverReader { hovered in
+                configuration.label
+                    .textStyle(.body, weight: .semibold, color: Theme.Paper.sheet)
+                    .padding(.horizontal, compact ? 10 : 14)
+                    .frame(height: compact ? PaperButton.heightSm : PaperButton.height)
+                    .background(
+                        RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                            .fill(Theme.Paper.ink)
+                            // hover 加深 8%（§4.1）；只作用在底色上，字色不受影响
+                            .brightness(configuration.isPressed ? -0.14 : (hovered ? -0.08 : 0))
+                    )
+                    .opacity(isEnabled ? 1 : 0.45)
+                    .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.sm))
+                    .hitExpand(from: compact ? PaperButton.heightSm : PaperButton.height, to: 44)
+            }
+        } else {
+            configuration.label
+                .textStyle(.body, weight: .medium, color: Theme.textOnAccent)
+                .padding(.horizontal, compact ? 14 : 20)
+                .frame(height: compact ? Theme.Size.buttonHeightSm : Theme.Size.buttonHeight)
+                .background(
+                    RoundedRectangle(cornerRadius: Theme.Radius.md)
+                        .fill(Theme.brandGradient)
+                        .brightness(configuration.isPressed ? -0.06 : 0)
+                )
+                .elevation(.e1)
+                .opacity(isEnabled ? 1 : 0.45)
+                .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
+                .animation(Theme.Motion.micro, value: configuration.isPressed)
+                .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
+        }
     }
 }
 
@@ -210,20 +231,42 @@ struct SecondaryButtonStyle: ButtonStyle {
     @Environment(\.appReduceMotion) private var reduceMotion
     var compact = false
 
+    @ViewBuilder
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .textStyle(.body, weight: .medium, color: Theme.textPrimary)
-            .padding(.horizontal, compact ? 14 : 20)
-            .frame(height: compact ? Theme.Size.buttonHeightSm : Theme.Size.buttonHeight)
-            .background(
-                RoundedRectangle(cornerRadius: Theme.Radius.md)
-                    .fill(configuration.isPressed ? Theme.surfaceHover : Color.clear)
-            )
-            .glassControl(cornerRadius: Theme.Radius.md)
-            .opacity(isEnabled ? 1 : 0.45)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
-            .animation(Theme.Motion.micro, value: configuration.isPressed)
-            .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
+        if Theme.isPaper {
+            // v4 §4.1：纸底 + 1px hairline + 墨字；hover 描边转墨（预览 `.btn.secondary:hover`）
+            PaperHoverReader { hovered in
+                configuration.label
+                    .textStyle(.body, weight: .medium, color: Theme.Paper.ink)
+                    .padding(.horizontal, compact ? 10 : 14)
+                    .frame(height: compact ? PaperButton.heightSm : PaperButton.height)
+                    .background(
+                        RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                            .fill(Theme.Paper.sheet)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                            .strokeBorder(hovered ? Theme.Paper.ink : Theme.Paper.hairline, lineWidth: 1)
+                    )
+                    .opacity(isEnabled ? 1 : 0.45)
+                    .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.sm))
+                    .hitExpand(from: compact ? PaperButton.heightSm : PaperButton.height, to: 44)
+            }
+        } else {
+            configuration.label
+                .textStyle(.body, weight: .medium, color: Theme.textPrimary)
+                .padding(.horizontal, compact ? 14 : 20)
+                .frame(height: compact ? Theme.Size.buttonHeightSm : Theme.Size.buttonHeight)
+                .background(
+                    RoundedRectangle(cornerRadius: Theme.Radius.md)
+                        .fill(configuration.isPressed ? Theme.surfaceHover : Color.clear)
+                )
+                .glassControl(cornerRadius: Theme.Radius.md)
+                .opacity(isEnabled ? 1 : 0.45)
+                .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
+                .animation(Theme.Motion.micro, value: configuration.isPressed)
+                .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
+        }
     }
 }
 
@@ -232,17 +275,35 @@ struct GhostButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     var compact = false
 
+    @ViewBuilder
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .textStyle(.body, weight: .medium, color: Theme.textSecondary)
-            .padding(.horizontal, compact ? 12 : 16)
-            .frame(height: compact ? Theme.Size.buttonHeightSm : Theme.Size.buttonHeight)
-            .background(
-                RoundedRectangle(cornerRadius: Theme.Radius.md)
-                    .fill(configuration.isPressed ? Theme.surfaceHover : Color.clear)
-            )
-            .opacity(isEnabled ? 1 : 0.45)
-            .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
+        if Theme.isPaper {
+            // v4 §4.1：幽灵按钮 = 无底无框的 ink2 文字，hover 才浮出纸底
+            PaperHoverReader { hovered in
+                configuration.label
+                    .textStyle(.body, weight: .medium, color: hovered ? Theme.Paper.ink : Theme.Paper.ink2)
+                    .padding(.horizontal, compact ? 6 : 8)
+                    .frame(height: compact ? PaperButton.heightSm : PaperButton.height)
+                    .background(
+                        RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                            .fill(hovered ? Theme.Paper.hover : Color.clear)
+                    )
+                    .opacity(isEnabled ? 1 : 0.45)
+                    .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.sm))
+                    .hitExpand(from: compact ? PaperButton.heightSm : PaperButton.height, to: 44)
+            }
+        } else {
+            configuration.label
+                .textStyle(.body, weight: .medium, color: Theme.textSecondary)
+                .padding(.horizontal, compact ? 12 : 16)
+                .frame(height: compact ? Theme.Size.buttonHeightSm : Theme.Size.buttonHeight)
+                .background(
+                    RoundedRectangle(cornerRadius: Theme.Radius.md)
+                        .fill(configuration.isPressed ? Theme.surfaceHover : Color.clear)
+                )
+                .opacity(isEnabled ? 1 : 0.45)
+                .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
+        }
     }
 }
 
@@ -251,22 +312,50 @@ struct DangerButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     var compact = false
 
+    @ViewBuilder
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .textStyle(.body, weight: .medium, color: Theme.danger)
-            .padding(.horizontal, compact ? 14 : 20)
-            .frame(height: compact ? Theme.Size.buttonHeightSm : Theme.Size.buttonHeight)
-            .background(
-                RoundedRectangle(cornerRadius: Theme.Radius.md)
-                    .fill(configuration.isPressed ? Theme.danger.opacity(0.08) : Theme.surface)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.Radius.md)
-                    .strokeBorder(Theme.danger)
-            )
-            .opacity(isEnabled ? 1 : 0.45)
-            .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
+        if Theme.isPaper {
+            // v4 §4.1：信号红实底 + 白字（红是唯一行动色，破坏性操作正是它的语义）
+            PaperHoverReader { hovered in
+                configuration.label
+                    .textStyle(.body, weight: .semibold, color: Theme.textOnAccent)
+                    .padding(.horizontal, compact ? 10 : 14)
+                    .frame(height: compact ? PaperButton.heightSm : PaperButton.height)
+                    .background(
+                        RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                            .fill(Theme.Paper.signal)
+                            .brightness(hovered ? -0.08 : 0)
+                    )
+                    .opacity(isEnabled ? 1 : 0.45)
+                    .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.sm))
+                    .hitExpand(from: compact ? PaperButton.heightSm : PaperButton.height, to: 44)
+            }
+        } else {
+            configuration.label
+                .textStyle(.body, weight: .medium, color: Theme.danger)
+                .padding(.horizontal, compact ? 14 : 20)
+                .frame(height: compact ? Theme.Size.buttonHeightSm : Theme.Size.buttonHeight)
+                .background(
+                    RoundedRectangle(cornerRadius: Theme.Radius.md)
+                        .fill(configuration.isPressed ? Theme.danger.opacity(0.08) : Theme.surface)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: Theme.Radius.md)
+                        .strokeBorder(Theme.danger)
+                )
+                .opacity(isEnabled ? 1 : 0.45)
+                .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
+        }
     }
+}
+
+// MARK: - 纸墨按钮尺寸（契约 §4.1：常规 32 / 紧凑 28，热区仍 44）
+
+/// v4 按钮高度。玻璃按钮沿用 `Theme.Size.buttonHeight`（44/32），纸墨另起一档 ——
+/// 印刷品的按钮是「一行铅字」的高度，不是触摸目标的高度；热区由 `hitExpand` 单独撑。
+private enum PaperButton {
+    static let height: CGFloat = 32
+    static let heightSm: CGFloat = 28
 }
 
 // MARK: - 图标按钮（28 / 32 / 44 三档，必须有 accessibilityLabel）
@@ -285,6 +374,7 @@ struct IconButton: View {
 
     @State private var hovered = false
     @FocusState private var focused: Bool
+    @Environment(\.appReduceMotion) private var reduceMotion
 
     var body: some View {
         Button(action: action) {
@@ -301,8 +391,8 @@ struct IconButton: View {
         .focused($focused)
         .focusRing(focused, cornerRadius: size / 2)
         .onHover { hovered = $0 }
-        .animation(Theme.Motion.micro, value: hovered)
-        .animation(Theme.Motion.micro, value: isOn)
+        .animation(PaperMotion.micro(reduceMotion: reduceMotion), value: hovered)
+        .animation(PaperMotion.micro(reduceMotion: reduceMotion), value: isOn)
         .help(help ?? label)
         .accessibilityLabel(label)
     }
@@ -317,12 +407,27 @@ struct IconButton: View {
 
     private var foreground: Color {
         if let tint { return tint }
+        // 纸墨：选中态是墨块填充，图标要反色成纸色才压得住
+        if Theme.isPaper { return isOn ? Theme.Paper.sheet : Theme.Paper.ink2 }
         return isOn ? Theme.brandText : Theme.textSecondary
     }
 
     @ViewBuilder
     private var surface: some View {
-        if isOn {
+        if Theme.isPaper {
+            // 纸墨无玻璃：未选中 hover 换纸底；选中 = 墨块填充（§2.3「选中是墨块而非描边」）。
+            // 带语义 tint 的选中（收藏 / 删除）不铺墨块 —— 墨底会把语义色压没，
+            // 改用 8% 信号红底，颜色仍是唯一载体之外的冗余信息。
+            if isOn {
+                if tint == nil {
+                    Circle().fill(Theme.Paper.ink)
+                } else {
+                    Circle().fill(Theme.Paper.signalTint)
+                }
+            } else {
+                Circle().fill(hovered ? Theme.Paper.hover : Color.clear)
+            }
+        } else if isOn {
             // 选中态：实底 tint + 主色描边（玻璃下选中要压得住底下的氛围色）
             Circle()
                 .fill(Theme.surfaceSelected)
@@ -346,12 +451,14 @@ struct PlainIconButton: View {
 
     @State private var hovered = false
     @FocusState private var focused: Bool
+    @Environment(\.appReduceMotion) private var reduceMotion
 
     var body: some View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: size < 32 ? 13 : 15, weight: .medium))
-                .foregroundStyle(tint ?? (isOn ? Theme.brandText : (hovered ? Theme.textPrimary : Theme.textSecondary)))
+                // 纸墨下「激活」= 墨字（红只属于声音，不拿红当开关态）
+                .foregroundStyle(tint ?? (isOn ? (Theme.isPaper ? Theme.Paper.ink : Theme.brandText) : (hovered ? Theme.textPrimary : Theme.textSecondary)))
                 .frame(width: size, height: size)
                 .background(
                     RoundedRectangle(cornerRadius: Theme.Radius.sm)
@@ -365,7 +472,7 @@ struct PlainIconButton: View {
         .focused($focused)
         .focusRing(focused, cornerRadius: Theme.Radius.sm)
         .onHover { hovered = $0 }
-        .animation(Theme.Motion.micro, value: hovered)
+        .animation(PaperMotion.micro(reduceMotion: reduceMotion), value: hovered)
         .help(label)
         .accessibilityLabel(label)
     }
@@ -431,8 +538,7 @@ struct SegmentedControl: View {
         }
         .padding(3)
         .frame(height: Theme.Size.segmentedHeight)
-        // 分段容器属于 chrome 层（§7.2 规则 1）：玻璃薄材质
-        .glassControl(cornerRadius: Theme.Radius.md, strength: .thin)
+        .modifier(SegmentedChrome())
         .accessibilityElement(children: .contain)
     }
 
@@ -449,6 +555,27 @@ struct SegmentedControl: View {
     }
 }
 
+/// 分段容器外壳：玻璃走薄材质（chrome 层，§7.2 规则 1），纸墨走「sunken 纸底 + 1px hairline」。
+private struct SegmentedChrome: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if Theme.isPaper {
+            // v4 §4.2：纸底容器 + 1px hairline，圆角 2
+            content
+                .background(
+                    RoundedRectangle(cornerRadius: Theme.Radius.xs)
+                        .fill(Theme.Paper.sunken)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: Theme.Radius.xs)
+                        .strokeBorder(Theme.Paper.hairline)
+                )
+        } else {
+            content.glassControl(cornerRadius: Theme.Radius.md, strength: .thin)
+        }
+    }
+}
+
 private struct SegmentButton: View {
     let title: String
     let systemImage: String?
@@ -458,6 +585,7 @@ private struct SegmentButton: View {
 
     @State private var hovered = false
     @FocusState private var focused: Bool
+    @Environment(\.appReduceMotion) private var reduceMotion
 
     var body: some View {
         Button(action: action) {
@@ -468,31 +596,47 @@ private struct SegmentButton: View {
                 }
                 if !iconOnly {
                     Text(title)
-                        .textStyle(.bodySM, weight: .medium, color: isSelected ? Theme.textOnAccent : Theme.textSecondary)
+                        .textStyle(.bodySM, weight: .medium, color: labelColor)
                 }
             }
-            .foregroundStyle(isSelected ? Theme.textOnAccent : Theme.textSecondary)
+            .foregroundStyle(labelColor)
             .padding(.horizontal, iconOnly ? 9 : 14)
             .frame(height: Theme.Size.segmentHeight)
             .background(
-                RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                RoundedRectangle(cornerRadius: cornerRadius)
                     .fill(fill)
             )
-            .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.sm))
+            .contentShape(RoundedRectangle(cornerRadius: cornerRadius))
             .hitExpand(from: Theme.Size.segmentHeight, to: 44)
         }
         .buttonStyle(.plain)
         .acceptClickThrough()
         .focused($focused)
-        .focusRing(focused, cornerRadius: Theme.Radius.sm)
+        .focusRing(focused, cornerRadius: cornerRadius)
         .onHover { hovered = $0 }
-        .animation(Theme.Motion.micro, value: isSelected)
-        .animation(Theme.Motion.micro, value: hovered)
+        .animation(PaperMotion.micro(reduceMotion: reduceMotion), value: isSelected)
+        .animation(PaperMotion.micro(reduceMotion: reduceMotion), value: hovered)
         .accessibilityLabel(title)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 
+    /// 纸墨下选中段 = 墨底纸字，未选中 in2（§4.2）
+    private var labelColor: Color {
+        if Theme.isPaper { return isSelected ? Theme.Paper.sheet : Theme.Paper.ink2 }
+        return isSelected ? Theme.textOnAccent : Theme.textSecondary
+    }
+
+    /// 纸墨分段圆角 2（`Radius.xs`），玻璃沿用 `Radius.sm`
+    private var cornerRadius: CGFloat {
+        Theme.isPaper ? Theme.Radius.xs : Theme.Radius.sm
+    }
+
     private var fill: AnyShapeStyle {
+        if Theme.isPaper {
+            if isSelected { return AnyShapeStyle(Theme.Paper.ink) }
+            if hovered { return AnyShapeStyle(Theme.Paper.hover) }
+            return AnyShapeStyle(Color.clear)
+        }
         if isSelected { return AnyShapeStyle(Theme.brandGradient) }
         if hovered { return AnyShapeStyle(Theme.surfaceHover) }
         return AnyShapeStyle(Color.clear)
@@ -510,13 +654,18 @@ struct Chip: View {
             .padding(.horizontal, 9)
             .frame(height: 22)
             .background(
-                RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                RoundedRectangle(cornerRadius: chipRadius)
                     .fill(Theme.surface)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                RoundedRectangle(cornerRadius: chipRadius)
                     .strokeBorder(Theme.borderSubtle)
             )
+    }
+
+    /// 纸墨下标签是胶囊（印刷品的圆角例外只留给「可点的软物件」）；玻璃沿用 `Radius.sm`
+    private var chipRadius: CGFloat {
+        Theme.isPaper ? Theme.Radius.full : Theme.Radius.sm
     }
 }
 
@@ -629,6 +778,52 @@ struct ConfirmDialog: View {
     let onCancel: () -> Void
 
     var body: some View {
+        if Theme.isPaper {
+            paperDialog
+        } else {
+            ZStack {
+                Theme.scrim
+                    .ignoresSafeArea()
+                    .onTapGesture(perform: onCancel)
+                    .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
+                    Text(title)
+                        .textStyle(.title4, color: Theme.textPrimary)
+                        .accessibilityAddTraits(.isHeader)
+                    Text(message)
+                        .textStyle(.bodySM, color: Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    HStack(spacing: Theme.Spacing.lg) {
+                        Spacer(minLength: 0)
+                        Button("取消", action: onCancel)
+                            .buttonStyle(GhostButtonStyle(compact: true))
+                            .keyboardShortcut(.cancelAction)
+                        Button(confirmTitle, action: onConfirm)
+                            .buttonStyle(isDestructive ? AnyButtonStyle(DangerButtonStyle(compact: true))
+                                                       : AnyButtonStyle(PrimaryButtonStyle(compact: true)))
+                    }
+                    .padding(.top, Theme.Spacing.xs)
+                }
+                .padding(Theme.Spacing.xxxl)
+                .frame(width: 420, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: Theme.Radius.lg)
+                        .fill(Theme.surface)
+                )
+                .glassPanel(.thick, cornerRadius: Theme.Radius.lg, elevation: .e3)
+                .accessibilityElement(children: .contain)
+            }
+            .transition(.opacity)
+        }
+    }
+
+    /// v4 §6.8：纸墨弹窗 = 墨底纸字 + 2px 右下硬阴影（与 Toast 同一套「活版压印」）。
+    ///
+    /// 两个按钮都换成纸底次按钮：墨底面板上幽灵按钮的 ink2 字会消失；
+    /// 破坏性确认仍走信号红实底（红是唯一行动色，也正是它的语义）。
+    private var paperDialog: some View {
         ZStack {
             Theme.scrim
                 .ignoresSafeArea()
@@ -637,30 +832,30 @@ struct ConfirmDialog: View {
 
             VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
                 Text(title)
-                    .textStyle(.title4, color: Theme.textPrimary)
+                    .textStyle(.title4, color: Theme.Paper.sheet)
                     .accessibilityAddTraits(.isHeader)
                 Text(message)
-                    .textStyle(.bodySM, color: Theme.textSecondary)
+                    .textStyle(.bodySM, color: Theme.Paper.sheet.opacity(0.78))
                     .fixedSize(horizontal: false, vertical: true)
 
                 HStack(spacing: Theme.Spacing.lg) {
                     Spacer(minLength: 0)
                     Button("取消", action: onCancel)
-                        .buttonStyle(GhostButtonStyle(compact: true))
+                        .buttonStyle(SecondaryButtonStyle(compact: true))
                         .keyboardShortcut(.cancelAction)
                     Button(confirmTitle, action: onConfirm)
                         .buttonStyle(isDestructive ? AnyButtonStyle(DangerButtonStyle(compact: true))
-                                                   : AnyButtonStyle(PrimaryButtonStyle(compact: true)))
+                                                   : AnyButtonStyle(SecondaryButtonStyle(compact: true)))
                 }
                 .padding(.top, Theme.Spacing.xs)
             }
             .padding(Theme.Spacing.xxxl)
             .frame(width: 420, alignment: .leading)
             .background(
-                RoundedRectangle(cornerRadius: Theme.Radius.lg)
-                    .fill(Theme.surface)
+                RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                    .fill(Theme.Paper.ink)
             )
-            .glassPanel(.thick, cornerRadius: Theme.Radius.lg, elevation: .e3)
+            .shadow(color: Theme.Paper.hairlineStrong, radius: 0, x: 2, y: 2)
             .accessibilityElement(children: .contain)
         }
         .transition(.opacity)
@@ -814,7 +1009,7 @@ struct QuickPill: View {
             .background(
                 Capsule().fill(hovered ? Theme.surfaceHover : Color.clear)
             )
-            .glassControl(cornerRadius: 16)
+            .modifier(QuickPillChrome(hovered: hovered))
             .contentShape(Capsule())
             .hitExpand(from: 32, to: 44)
             .offset(y: Theme.lift(hovered, reduceMotion: reduceMotion) / 2)
@@ -824,8 +1019,32 @@ struct QuickPill: View {
         .focused($focused)
         .focusRing(focused, cornerRadius: 22)
         .onHover { hovered = $0 }
-        .animation(Theme.Motion.micro, value: hovered)
+        .animation(PaperMotion.micro(reduceMotion: reduceMotion), value: hovered)
         .accessibilityLabel(title)
+    }
+}
+
+/// 快速入口胶囊外壳：玻璃走 `glassControl`（不做 blur，§7.2 规则 4），
+/// 纸墨走「纸底胶囊 + 1px hairline」（v4 §4.2，hover 描边转墨 —— 预览 `.pill:hover`）。
+private struct QuickPillChrome: ViewModifier {
+    let hovered: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if Theme.isPaper {
+            content
+                .background(
+                    Capsule().fill(hovered ? Theme.Paper.hover : Theme.Paper.sheet)
+                )
+                .overlay(
+                    Capsule().strokeBorder(
+                        hovered ? Theme.Paper.ink : Theme.Paper.hairline,
+                        lineWidth: 1
+                    )
+                )
+        } else {
+            content.glassControl(cornerRadius: 16)
+        }
     }
 }
 
@@ -837,22 +1056,53 @@ struct TokenField<Content: View>: View {
     var isError = false
     @ViewBuilder var content: Content
 
+    @Environment(\.appReduceMotion) private var reduceMotion
+
+    @ViewBuilder
     var body: some View {
-        content
-            .padding(.horizontal, 11)
-            .frame(height: height)
-            .background(
-                RoundedRectangle(cornerRadius: Theme.Radius.md)
-                    .fill(isFocused ? Theme.surface : Color.clear)
-            )
-            // 输入框属于 chrome 层（§7.4）：玻璃材质 + 聚焦时主色描边 + 焦点环
-            .glassControl(cornerRadius: Theme.Radius.md)
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.Radius.md)
-                    .strokeBorder(borderColor, lineWidth: isFocused ? 1.5 : 1)
-            )
-            .focusRing(isFocused)
-            .animation(Theme.Motion.micro, value: isFocused)
+        if Theme.isPaper {
+            // v4 §4.2：sunken 纸底 + 1px hairline；聚焦 = hairline-strong + 2px 信号红外环
+            // （实线，不用发光 —— 印刷品没有光晕）
+            content
+                .padding(.horizontal, 11)
+                .frame(height: height)
+                .background(
+                    RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                        .fill(isFocused ? Theme.Paper.sheet : Theme.Paper.sunken)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                        .strokeBorder(paperBorderColor, lineWidth: 1)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: Theme.Radius.sm + 2)
+                        .strokeBorder(Theme.Paper.signalTint, lineWidth: 2)
+                        .padding(-2)
+                        .opacity(isFocused ? 1 : 0)
+                )
+                .animation(reduceMotion ? nil : Theme.Motion.micro, value: isFocused)
+        } else {
+            content
+                .padding(.horizontal, 11)
+                .frame(height: height)
+                .background(
+                    RoundedRectangle(cornerRadius: Theme.Radius.md)
+                        .fill(isFocused ? Theme.surface : Color.clear)
+                )
+                // 输入框属于 chrome 层（§7.4）：玻璃材质 + 聚焦时主色描边 + 焦点环
+                .glassControl(cornerRadius: Theme.Radius.md)
+                .overlay(
+                    RoundedRectangle(cornerRadius: Theme.Radius.md)
+                        .strokeBorder(borderColor, lineWidth: isFocused ? 1.5 : 1)
+                )
+                .focusRing(isFocused)
+                .animation(Theme.Motion.micro, value: isFocused)
+        }
+    }
+
+    private var paperBorderColor: Color {
+        if isError { return Theme.Paper.signal }
+        return isFocused ? Theme.Paper.hairlineStrong : Theme.Paper.hairline
     }
 
     private var borderColor: Color {
@@ -916,6 +1166,12 @@ struct SearchField: View {
         .onChange(of: focusRequest) { _ in
             focused = true
         }
+        .onAppear {
+            // 首次挂载时就带着尚未消费的 ⌘F 请求（一级页常驻后，搜索页通常是
+            // 由 ⌘F 第一次打开的）：onChange 不会触发，这里补一次，
+            // 否则「⌘F → 跳到搜索页」之后输入框拿不到焦点。
+            if focusRequest > 0 { focused = true }
+        }
     }
 }
 
@@ -928,29 +1184,59 @@ struct SkeletonBlock: View {
     @State private var sweeping = false
 
     var body: some View {
-        RoundedRectangle(cornerRadius: cornerRadius)
-            .fill(Theme.surfaceSunken)
-            .overlay {
-                if !reduceMotion {
-                    GeometryReader { geo in
-                        LinearGradient(
-                            colors: [.clear, Theme.shimmer, .clear],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                        .frame(width: max(geo.size.width * 0.55, 24))
-                        .offset(x: sweeping ? geo.size.width * 1.6 : -geo.size.width * 0.6)
+        if Theme.isPaper {
+            // v4 §4.8：骨架 = sunken 纸底 + 谐波线扫过（1200ms 一次，Reduce Motion 静止）
+            RoundedRectangle(cornerRadius: cornerRadius)
+                .fill(Theme.Paper.sunken)
+                .overlay {
+                    if !reduceMotion {
+                        GeometryReader { geo in
+                            HarmonicLines(count: 2)
+                                .stroke(
+                                    Theme.Paper.hairlineStrong,
+                                    style: StrokeStyle(lineWidth: 1, lineCap: .round)
+                                )
+                                .frame(
+                                    width: max(geo.size.width * 0.5, 28),
+                                    height: min(geo.size.height * 0.62, 20)
+                                )
+                                .offset(x: sweeping ? geo.size.width * 1.4 : -geo.size.width * 0.5)
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
                     }
-                    .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
                 }
-            }
-            .onAppear {
-                guard !reduceMotion else { return }
-                withAnimation(.linear(duration: 1.2).repeatForever(autoreverses: false)) {
-                    sweeping = true
+                .onAppear {
+                    guard !reduceMotion else { return }
+                    withAnimation(.linear(duration: 1.2).repeatForever(autoreverses: false)) {
+                        sweeping = true
+                    }
                 }
-            }
-            .accessibilityHidden(true)
+                .accessibilityHidden(true)
+        } else {
+            RoundedRectangle(cornerRadius: cornerRadius)
+                .fill(Theme.surfaceSunken)
+                .overlay {
+                    if !reduceMotion {
+                        GeometryReader { geo in
+                            LinearGradient(
+                                colors: [.clear, Theme.shimmer, .clear],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                            .frame(width: max(geo.size.width * 0.55, 24))
+                            .offset(x: sweeping ? geo.size.width * 1.6 : -geo.size.width * 0.6)
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+                    }
+                }
+                .onAppear {
+                    guard !reduceMotion else { return }
+                    withAnimation(.linear(duration: 1.2).repeatForever(autoreverses: false)) {
+                        sweeping = true
+                    }
+                }
+                .accessibilityHidden(true)
+        }
     }
 }
 
@@ -1040,20 +1326,37 @@ struct HarmonicMark: View {
     var size: CGFloat = 64
 
     var body: some View {
-        ZStack {
-            Circle()
-                .fill(Theme.brandTint)
-            HarmonicLines()
-                .stroke(Theme.brandText.opacity(0.32), style: StrokeStyle(lineWidth: 1.2, lineCap: .round))
-                .frame(width: size * 0.74, height: size * 0.42)
-            if let systemImage {
-                Image(systemName: systemImage)
-                    .font(.system(size: size * 0.28, weight: .regular))
-                    .foregroundStyle(Theme.brandText)
+        if Theme.isPaper {
+            // v4 §2.4：纸墨下的谐波线是纯墨线插画 —— 印刷品不铺品牌色圆底，
+            // 线宽按 §2.4 提到 1.5px；语义图标移到波形上方，免得与折线互相打架。
+            VStack(spacing: 6) {
+                if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.system(size: size * 0.24, weight: .regular))
+                        .foregroundStyle(Theme.Paper.ink2)
+                }
+                HarmonicLines()
+                    .stroke(Theme.Paper.ink, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                    .frame(width: size * 0.9, height: size * 0.34)
             }
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
+        } else {
+            ZStack {
+                Circle()
+                    .fill(Theme.brandTint)
+                HarmonicLines()
+                    .stroke(Theme.brandText.opacity(0.32), style: StrokeStyle(lineWidth: 1.2, lineCap: .round))
+                    .frame(width: size * 0.74, height: size * 0.42)
+                if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.system(size: size * 0.28, weight: .regular))
+                        .foregroundStyle(Theme.brandText)
+                }
+            }
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
         }
-        .frame(width: size, height: size)
-        .accessibilityHidden(true)
     }
 }
 
@@ -1067,7 +1370,8 @@ struct EmptyState<Action: View>: View {
         VStack(spacing: Theme.Spacing.md) {
             HarmonicMark(systemImage: systemImage)
             Text(title)
-                .textStyle(.title4, color: Theme.textPrimary)
+                // v4 §4.8：空态标题在纸墨下走衬线（glass 分支由 paperSerifTitle 内部原样回落 textStyle）
+                .paperSerifTitle(.title4)
                 .multilineTextAlignment(.center)
             if let message {
                 Text(message)
@@ -1123,24 +1427,45 @@ struct ToastView: View {
     let message: ToastMessage
 
     var body: some View {
-        HStack(spacing: Theme.Spacing.md) {
-            Image(systemName: message.systemImage)
-                .font(.system(size: 13, weight: .semibold))
-            Text(message.text)
-                .textStyle(.bodySM, weight: .medium, color: Theme.textOnInverse)
+        if Theme.isPaper {
+            // v4 §4.8：墨底纸字 + 2px 右下硬阴影（活版压印）——纸墨下投影的唯一例外
+            HStack(spacing: Theme.Spacing.md) {
+                Image(systemName: message.systemImage)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.Paper.signal)
+                Text(message.text)
+                    .textStyle(.bodySM, weight: .medium, color: Theme.Paper.sheet)
+            }
+            .padding(.horizontal, Theme.Spacing.xl)
+            .frame(height: 44)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                    .fill(Theme.Paper.ink)
+            )
+            // radius: 0 才是「硬」阴影：不做模糊，只有右下 2pt 的实边
+            .shadow(color: Theme.Paper.hairlineStrong, radius: 0, x: 2, y: 2)
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isStaticText)
+        } else {
+            HStack(spacing: Theme.Spacing.md) {
+                Image(systemName: message.systemImage)
+                    .font(.system(size: 13, weight: .semibold))
+                Text(message.text)
+                    .textStyle(.bodySM, weight: .medium, color: Theme.textOnInverse)
+            }
+            .foregroundStyle(Theme.textOnInverse)
+            .padding(.horizontal, Theme.Spacing.xl)
+            .frame(height: 44)
+            // Toast 属于 chrome 层：玻璃厚材质 + 反色染层（§7.4）；实底回退时染层仍在，对比度不丢
+            .glassPanel(
+                .thick,
+                cornerRadius: Theme.Radius.md,
+                elevation: .e2,
+                tint: Theme.inverseSurface.opacity(0.78)
+            )
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isStaticText)
         }
-        .foregroundStyle(Theme.textOnInverse)
-        .padding(.horizontal, Theme.Spacing.xl)
-        .frame(height: 44)
-        // Toast 属于 chrome 层：玻璃厚材质 + 反色染层（§7.4）；实底回退时染层仍在，对比度不丢
-        .glassPanel(
-            .thick,
-            cornerRadius: Theme.Radius.md,
-            elevation: .e2,
-            tint: Theme.inverseSurface.opacity(0.78)
-        )
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isStaticText)
     }
 }
 
@@ -1172,12 +1497,20 @@ struct SectionHeader<Trailing: View>: View {
     @ViewBuilder var trailing: () -> Trailing
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: Theme.Spacing.lg) {
-            Text(title)
-                .textStyle(.title3, color: Theme.textPrimary)
-                .accessibilityAddTraits(.isHeader)
-            Spacer(minLength: 0)
-            trailing()
+        if Theme.isPaper {
+            // v4 §4.7：区块标题在纸墨下即印刷规则标签（caption 字距标签 + 两侧细线），
+            // 调用方一字不改 —— 页面只写 `SectionHeader(title:)`，形态交给风格决定。
+            RuleLabel(title) {
+                trailing()
+            }
+        } else {
+            HStack(alignment: .firstTextBaseline, spacing: Theme.Spacing.lg) {
+                Text(title)
+                    .textStyle(.title3, color: Theme.textPrimary)
+                    .accessibilityAddTraits(.isHeader)
+                Spacer(minLength: 0)
+                trailing()
+            }
         }
     }
 }

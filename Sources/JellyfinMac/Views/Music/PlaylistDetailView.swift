@@ -106,11 +106,15 @@ struct PlaylistDetailView: View {
     @ViewBuilder
     private var header: some View {
         let coverSize = sizeClass.detailCoverSize
+        // 圆角：glass 保持 Radius.lg，paper 走套封 2px（§4.6）；glass 侧本来没有投影，level 传 nil
+        let coverRadius: CGFloat = Theme.isPaper ? Theme.Radius.cover : Theme.Radius.lg
         let cover = PlaylistCoverMosaic(
             tracks: coverTracks,
             size: coverSize,
+            cornerRadius: coverRadius,
             fallbackIcon: isSmart ? "sparkles" : "music.note.list"
         )
+        .pagesCoverChrome(radius: coverRadius, level: nil)
 
         if sizeClass.detailStacksVertically {
             VStack(alignment: .leading, spacing: Theme.Spacing.xxl) {
