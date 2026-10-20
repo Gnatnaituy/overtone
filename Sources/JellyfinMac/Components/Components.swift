@@ -102,58 +102,31 @@ struct ScrollBarHider: NSViewRepresentable {
     }
 }
 
-// MARK: - 均衡器动效（正在播放指示）
+// MARK: - 均衡器指示（正在播放标）
 
-/// 三根跳动的频谱柱，TimelineView 驱动（无 Timer 泄漏，暂停时静止）。
-/// 不设 minimumInterval：跟随屏幕刷新率（ProMotion 120Hz / 普通屏 60Hz），
-/// 动画交给系统 display link 节奏，不自行推帧。
-/// 开启「减少动态效果」时静止为三根等高柱（§8 动效）。
+/// 三根**静态**频谱柱：只承担「这一行是当前曲目 / 正在播放」的语义，不再逐帧跳动。
+///
+/// 2026-10-20 移除跳动动画：原实现用 `TimelineView(.animation(...))` 跟着屏幕刷新率
+/// （ProMotion 120Hz）每帧重算三根柱高，等于让 SwiftUI 每帧重建整个窗口的 DisplayList
+/// —— 播放中常驻 15%+ 单核 CPU，而换来的只是三根 2.5pt 小柱在抖。
+/// 现在固定为「减少动态效果」档的三根等高柱（§8 已定义该静止形态），
+/// 播放 / 暂停只切透明度，稳态零逐帧开销。
 struct EqualizerBars: View {
     var active: Bool = true
     var color: Color = Theme.overtoneTeal
     var barWidth: CGFloat = 2.5
     var height: CGFloat = 12
 
-    @Environment(\.appReduceMotion) private var reduceMotion
-
-    private let phases: [Double] = [0, 1.7, 3.1]
-
     var body: some View {
-        Group {
-            if reduceMotion {
-                staticBars
-            } else {
-                TimelineView(.animation(paused: !active)) { context in
-                    let t = context.date.timeIntervalSinceReferenceDate
-                    HStack(spacing: barWidth * 0.8) {
-                        ForEach(0..<3, id: \.self) { i in
-                            Capsule()
-                                .fill(color)
-                                .frame(width: barWidth, height: barHeight(t: t, phase: phases[i]))
-                        }
-                    }
-                }
+        HStack(spacing: barWidth * 0.8) {
+            ForEach(0..<3, id: \.self) { _ in
+                Capsule().fill(color).frame(width: barWidth, height: height * 0.62)
             }
         }
         .frame(height: height)
         .opacity(active ? 1 : 0.35)
         .animation(Theme.Motion.base, value: active)
         .accessibilityHidden(true)
-    }
-
-    private var staticBars: some View {
-        HStack(spacing: barWidth * 0.8) {
-            ForEach(0..<3, id: \.self) { _ in
-                Capsule().fill(color).frame(width: barWidth, height: height * 0.62)
-            }
-        }
-    }
-
-    /// 双正弦叠加，模拟音乐律动（不规则但平滑）
-    private func barHeight(t: Double, phase: Double) -> CGFloat {
-        let wave = (sin(t * 6.0 + phase) + sin(t * 9.3 + phase * 1.6)) / 2.0
-        let ratio = 0.5 + 0.38 * wave // 0.12 ~ 0.88
-        return max(height * 0.18, height * ratio)
     }
 }
 

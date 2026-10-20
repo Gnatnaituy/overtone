@@ -46,14 +46,13 @@ private struct LeaderDotsShape: Shape {
 
 // MARK: - ON AIR 灯牌
 
-/// ON AIR 灯牌（§2.4）：3px 圆角信号红方块 + mono 小字，正在播放时呼吸。
+/// ON AIR 灯牌（§2.4）：3px 圆角信号红方块 + mono 小字，静态满浓度
+/// （原 900ms 呼吸已移除：它会逐帧驱动整窗重绘，见文件尾 `PaperBreathing` 的移除说明）。
 ///
 /// 为什么是「实心块 + 白字」而不是「红点 + 红字」：灯牌是模拟台机上的物理指示，
 /// 实心块在纸面上唯一能压住 ink 的彩色（§3 红只属于声音）；白字块本身也自带
 /// 「颜色不单独承载信息」的冗余（块 = 形状，文字 = 语义）。
 struct OnAirBadge: View {
-    /// true = 方块呼吸；Reduce Motion 下静止（§2.5）
-    var isPlaying: Bool = false
     /// true = 只有红方块（窄列 / 极窄窗，给不了「ON AIR」五个字符的宽度）
     var compact: Bool = false
 
@@ -78,8 +77,7 @@ struct OnAirBadge: View {
                     .fixedSize()
             }
         }
-        // 呼吸底档 0.40：静止态（Reduce Motion / 暂停）就停在设计稿的 40% 上
-        .modifier(PaperBreathing(active: isPlaying, minOpacity: 0.40))
+        // 静态满浓度（= 预览 `.onair`）；呼吸动画已移除，见 `PaperBreathing` 的移除说明
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("正在播放")
         .accessibilityAddTraits(.isStaticText)
@@ -88,8 +86,8 @@ struct OnAirBadge: View {
 
 // MARK: - VU 段条（全局唯一的进度形态）
 
-/// VU 段条（§4.5）：10 段方条，已播 = 信号红实心，当前段 = 信号红 40% + 900ms 呼吸，
-/// 未播 = hairline。
+/// VU 段条（§4.5）：10 段方条，已播 = 信号红实心，当前段 = 信号红 40%（静态，
+/// 原 900ms 呼吸已移除 —— 理由见 `PaperBreathing` 的移除说明），未播 = hairline。
 ///
 /// 段宽走 `maxWidth: .infinity` 而非固定值：320pt 窄列下段宽 ≈30pt，窄到 140pt 仍有
 /// 12pt 段宽（§10 验收线）；段与段之间恒为 2pt，靠的是 HStack 的 spacing 不参与压缩。
@@ -100,8 +98,6 @@ struct VUProgress: View {
     var value: Double
     var segments: Int = 10
     var height: CGFloat = 6
-    /// true = 当前段呼吸；Reduce Motion 下静止
-    var isPlaying: Bool = false
     /// 非 nil 时在主条上方画更细的缓冲段条
     var buffer: Double? = nil
 
@@ -147,14 +143,8 @@ struct VUProgress: View {
         if index < filled {
             shape.fill(isBuffer ? Theme.Paper.ink3.opacity(0.45) : Theme.Paper.signal)
         } else if index == filled {
-            // 当前段：主条给 900ms 呼吸（0.40 ↔ 0.25 有效浓度）；缓冲条不呼吸
-            if isBuffer {
-                shape.fill(Theme.Paper.hairline)
-            } else {
-                shape
-                    .fill(Theme.Paper.signal.opacity(0.40))
-                    .modifier(PaperBreathing(active: isPlaying, minOpacity: 0.62))
-            }
+            // 当前段：主条固定 40% 信号红（原呼吸动画已移除）；缓冲条走 hairline
+            shape.fill(isBuffer ? Theme.Paper.hairline : Theme.Paper.signal.opacity(0.40))
         } else {
             shape.fill(Theme.Paper.hairline)
         }
@@ -175,10 +165,9 @@ struct VUProgress: View {
 /// 迷你 VU（§4.5）：高 4、无缓冲，调用方自己包 Button 做跳转（键盘 ±5s 沿用 v3）。
 struct VUMiniProgress: View {
     var value: Double
-    var isPlaying: Bool = false
 
     var body: some View {
-        VUProgress(value: value, segments: 10, height: 4, isPlaying: isPlaying, buffer: nil)
+        VUProgress(value: value, segments: 10, height: 4, buffer: nil)
     }
 }
 
@@ -343,37 +332,19 @@ enum PaperMotion {
     }
 }
 
-/// 900ms 呼吸（§2.5）。只在「正在播放 + 未开启减少动态效果」时运行；
-/// 其余情况恒停在 `maxOpacity`（静止档就是设计稿的基准浓度）。
-///
-/// 为什么用 `@State` + `repeatForever` 而不是 `TimelineView`：呼吸元素同屏通常只有
-/// 一个（当前行 / ON AIR），不需要 display link 推帧；`TimelineView` 每个实例都挂一条
-/// 刷新源，行数一多就是纯浪费（对比 `EqualizerBars` 那种需要连续波形的地方才用它）。
-struct PaperBreathing: ViewModifier {
-    let active: Bool
-    var minOpacity: Double = 0.45
-    var maxOpacity: Double = 1
+// MARK: - 已移除：900ms 呼吸（2026-10-20）
 
-    @Environment(\.appReduceMotion) private var reduceMotion
-    @State private var dimmed = false
-
-    func body(content: Content) -> some View {
-        content
-            .opacity(dimmed ? minOpacity : maxOpacity)
-            .onAppear { sync() }
-            .onChange(of: active) { _ in sync() }
-            .onChange(of: reduceMotion) { _ in sync() }
-    }
-
-    private func sync() {
-        guard active, !reduceMotion else {
-            // 停：用一次性短过渡回到静止档，把 repeatForever 顶掉，避免残留动画继续跑
-            withAnimation(.linear(duration: 0.12)) { dimmed = false }
-            return
-        }
-        withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) { dimmed = true }
-    }
-}
+// 这里原本是 `PaperBreathing`：给 ON AIR 灯牌与 VU 当前段套 900ms 的 opacity 呼吸。
+// 移除原因不是「动画停不下来」（那个 bug 已单独修掉），而是**成本模型**：
+// SwiftUI 没有「只重绘某个子视图」的公开接口 —— 显示列表以 `NSHostingView`（整个窗口）
+// 为单位，动画由应用进程内的 `AnimatorState` 逐帧插值，**任意一个逐帧动画都会让整窗
+// 每帧重建一次 DisplayList**。复现台实测（300 节点窗口）：静态 0.38% / 只跑呼吸 8.4% /
+// 只跑频谱柱 11.4% / 两者同跑 12.3%（不叠加，因为合并进同一帧）。
+// 也就是说，一个 8×8 的点 + 一个 26×4 的段，播放中就要吃掉 8%+ 单核。
+//
+// 想要「保动效 + 零开销」只能把动画交给 Core Animation（渲染服务器插值，App 侧每帧≈0），
+// 那是另一套实现；这轮按产品决定改静态。静态档本来就是设计稿基准：
+// 灯牌满浓度（预览 `.onair`）、VU 当前段 = 信号红 40%（§4.5）。
 
 /// paper 按钮样式的 hover 追踪壳。
 ///

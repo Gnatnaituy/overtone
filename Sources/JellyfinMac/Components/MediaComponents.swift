@@ -709,13 +709,12 @@ enum PaperRowMetrics {
 /// 单独成视图：`PlaybackProgress` 每 0.5s 发布一次，若由行视图直接观察，整张表
 /// （可能上千行）都会跟着 2Hz 重算。观察收在这里，重算范围只剩这一根段条。
 struct RowMiniVU: View {
-    let isPlaying: Bool
     var width: CGFloat = 64
 
     @ObservedObject private var progress = MusicPlayerModel.shared.progress
 
     var body: some View {
-        VUMiniProgress(value: ratio, isPlaying: isPlaying)
+        VUMiniProgress(value: ratio)
             .frame(width: width)
     }
 
@@ -873,8 +872,8 @@ struct PaperTrackRow<Actions: View>: View {
     private var valueColumn: some View {
         if isCurrent {
             HStack(spacing: Theme.Spacing.md) {
-                OnAirBadge(isPlaying: isPlaying, compact: compactBadge)
-                RowMiniVU(isPlaying: isPlaying)
+                OnAirBadge(compact: compactBadge)
+                RowMiniVU()
             }
             .padding(.leading, Theme.Spacing.lg)
         } else {

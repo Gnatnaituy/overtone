@@ -243,7 +243,7 @@ struct NowPlayingView: View {
             VStack(spacing: 5) {
                 // 当前播放状态不只靠颜色：ON AIR 徽标 + 下方 VU 段条 + 5 键控制
                 if music.currentTrack != nil {
-                    OnAirBadge(isPlaying: music.isPlaying)
+                    OnAirBadge()
                 }
                 Text(music.currentTrack?.name ?? "未在播放")
                     .textStyle(.display, color: Theme.Paper.ink)
@@ -1060,8 +1060,7 @@ private struct NowPlayingProgressSection: View {
             VUProgress(
                 value: progressRatio,
                 segments: 10,
-                height: 10,
-                isPlaying: MusicPlayerModel.shared.isPlaying
+                height: 10
             )
             .frame(height: 12)
             .frame(maxHeight: .infinity)

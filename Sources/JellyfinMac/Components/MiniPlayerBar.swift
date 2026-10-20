@@ -82,7 +82,7 @@ struct MiniPlayerBar: View {
                 // paper：ON AIR 灯牌（§2.4）。窄条降级成只有红方块 —— 播放条可用宽度
                 // 由侧栏拖拽决定，宽度不够时优先保住标题与控制区
                 if Theme.isPaper {
-                    OnAirBadge(isPlaying: music.isPlaying, compact: !showsFullOnAir)
+                    OnAirBadge(compact: !showsFullOnAir)
                 }
             }
             // 左区上限 220（设计稿），窄窗可一路压缩到「封面 + 少量标题」，
@@ -222,7 +222,7 @@ struct MiniPlayerBar: View {
     /// 键盘 / VoiceOver 的 ±5s 可调动作与 glass 完全一致
     private var paperVUProgress: some View {
         GeometryReader { geo in
-            VUMiniProgress(value: progressRatio, isPlaying: music.isPlaying)
+            VUMiniProgress(value: progressRatio)
                 .frame(height: 10)
                 .frame(maxHeight: .infinity)
                 .contentShape(Rectangle())

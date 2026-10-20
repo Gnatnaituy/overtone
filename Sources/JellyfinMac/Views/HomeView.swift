@@ -538,9 +538,9 @@ private struct TopTrackRow: View {
             }
 
             if isCurrent {
-                OnAirBadge(isPlaying: isPlaying, compact: sizeClass <= .w1)
+                OnAirBadge(compact: sizeClass <= .w1)
                     .layoutPriority(2)
-                CurrentRowVU(isPlaying: isPlaying)
+                CurrentRowVU()
                     .layoutPriority(2)
             } else {
                 Text(formatPlaybackTime(track.runtimeSeconds))
@@ -613,8 +613,6 @@ private struct TopTrackRow: View {
 /// 单独抽出来观察 `PlaybackProgress`：position 每 0.5s 发布一次，
 /// 若由 TopTrackRow 直接观察，整张 Top 10 会跟着 tick 重算。
 private struct CurrentRowVU: View {
-    let isPlaying: Bool
-
     @ObservedObject private var progress = MusicPlayerModel.shared.progress
 
     private var value: Double {
@@ -623,7 +621,7 @@ private struct CurrentRowVU: View {
     }
 
     var body: some View {
-        VUMiniProgress(value: value, isPlaying: isPlaying)
+        VUMiniProgress(value: value)
             .frame(width: 64)
             .accessibilityHidden(true)
     }
