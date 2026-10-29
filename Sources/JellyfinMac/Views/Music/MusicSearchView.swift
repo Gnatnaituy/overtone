@@ -11,6 +11,9 @@ struct MusicSearchView: View {
     @Binding var query: String
     /// ⌘F 一次性聚焦请求（消费后由顶栏搜索框自行处理）
     let focusRequest: Int
+    /// 二级结果页的面包屑上级（来自导航栈；从任意页打开搜索时返回原页面）
+    let parentTitle: String?
+    let onBack: (() -> Void)?
     let onOpenAlbum: (MediaItem) -> Void
     let onOpenArtist: (MediaItem) -> Void
     let onOpenPlaylist: (Playlist) -> Void
@@ -34,6 +37,15 @@ struct MusicSearchView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if let parentTitle, let onBack {
+                BreadcrumbBar(
+                    sizeClass: sizeClass,
+                    parentTitle: parentTitle,
+                    onParent: onBack,
+                    title: "搜索"
+                )
+            }
+
             PageTopBar(
                 sizeClass: sizeClass,
                 title: "搜索",

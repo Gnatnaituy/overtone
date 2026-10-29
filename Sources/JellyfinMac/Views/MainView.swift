@@ -3,7 +3,7 @@ import SwiftUI
 // MARK: - 页面模型
 
 enum ContentPage: Equatable {
-    // 一级导航（侧栏固定 5 项）
+    // 一级导航（侧栏固定 4 项；搜索结果页走二级详情，不进侧栏）
     case home
     case library
     case playlists
@@ -20,14 +20,13 @@ enum ContentPage: Equatable {
     case album(MediaItem)
     case playlist(Playlist)
 
-    /// ⌘1…⌘5 对应的一级页
+    /// ⌘1…⌘4 对应的一级页（搜索框常驻顶栏，⌘F 聚焦；结果页是二级）
     static func primary(_ index: Int) -> ContentPage? {
         switch index {
         case 1: return .home
         case 2: return .library
         case 3: return .playlists
         case 4: return .nowPlaying
-        case 5: return .search
         default: return nil
         }
     }
@@ -41,7 +40,7 @@ enum ContentPage: Equatable {
         switch self {
         case .artist, .album: return .library
         case .playlist: return .playlists
-        case .favorites, .recentlyPlayed, .mostPlayed, .stats: return .home
+        case .favorites, .recentlyPlayed, .mostPlayed, .stats, .search: return .home
         default: return self
         }
     }
@@ -66,7 +65,7 @@ enum LibrarySegment: String, CaseIterable {
 /// 单独抽出来是为了给「一级页常驻」一个可哈希的粒度：`ContentPage` 带关联值
 /// （专辑 / 艺人 / 播放列表详情），不适合做常驻挂载的键。
 enum RootTab: String, CaseIterable, Hashable {
-    case home, library, playlists, nowPlaying, search
+    case home, library, playlists, nowPlaying
 
     var page: ContentPage {
         switch self {
@@ -74,7 +73,6 @@ enum RootTab: String, CaseIterable, Hashable {
         case .library: return .library
         case .playlists: return .playlists
         case .nowPlaying: return .nowPlaying
-        case .search: return .search
         }
     }
 
@@ -84,7 +82,6 @@ enum RootTab: String, CaseIterable, Hashable {
         case .library: self = .library
         case .playlists: self = .playlists
         case .nowPlaying: self = .nowPlaying
-        case .search: self = .search
         default: return nil
         }
     }
@@ -477,7 +474,7 @@ struct MainView: View {
                 onOpenStats: { openFromHome(.stats) },
                 searchQuery: $searchQuery,
                 searchFocusRequest: searchFocus,
-                onSearchSubmit: { selectPage(.search) }
+                onSearchSubmit: { openSearch() }
             )
         case .library:
             MusicLibraryView(
@@ -491,7 +488,7 @@ struct MainView: View {
                 onOpenPlaylist: { push(.playlist($0)) },
                 searchQuery: $searchQuery,
                 searchFocusRequest: searchFocus,
-                onSearchSubmit: { selectPage(.search) }
+                onSearchSubmit: { openSearch() }
             )
         case .playlists:
             PlaylistsView(
@@ -499,7 +496,7 @@ struct MainView: View {
                 onOpenPlaylist: { push(.playlist($0)) },
                 searchQuery: $searchQuery,
                 searchFocusRequest: searchFocus,
-                onSearchSubmit: { selectPage(.search) }
+                onSearchSubmit: { openSearch() }
             )
         case .nowPlaying:
             NowPlayingView(sizeClass: sizeClass)
@@ -508,6 +505,8 @@ struct MainView: View {
                 sizeClass: sizeClass,
                 query: $searchQuery,
                 focusRequest: searchFocus,
+                parentTitle: parentTitle(for: .search),
+                onBack: pop,
                 onOpenAlbum: { push(.album($0)) },
                 onOpenArtist: { push(.artist($0)) },
                 onOpenPlaylist: { push(.playlist($0)) }
@@ -524,7 +523,7 @@ struct MainView: View {
                 onBack: pop,
                 searchQuery: $searchQuery,
                 searchFocusRequest: searchFocus,
-                onSearchSubmit: { selectPage(.search) }
+                onSearchSubmit: { openSearch() }
             )
         case .recentlyPlayed:
             TrackListPage(
@@ -537,7 +536,7 @@ struct MainView: View {
                 onBack: pop,
                 searchQuery: $searchQuery,
                 searchFocusRequest: searchFocus,
-                onSearchSubmit: { selectPage(.search) }
+                onSearchSubmit: { openSearch() }
             )
         case .mostPlayed:
             TrackListPage(
@@ -551,7 +550,7 @@ struct MainView: View {
                 onBack: pop,
                 searchQuery: $searchQuery,
                 searchFocusRequest: searchFocus,
-                onSearchSubmit: { selectPage(.search) }
+                onSearchSubmit: { openSearch() }
             )
         case .stats:
             StatsView(
@@ -642,7 +641,7 @@ struct MainView: View {
 
     private func handleSidebarSelect(_ page: ContentPage) {
         switch page {
-        case .home, .library, .playlists, .nowPlaying, .search:
+        case .home, .library, .playlists, .nowPlaying:
             selectPage(page)
         default:
             push(page)
@@ -670,10 +669,19 @@ struct MainView: View {
     }
 
     private func focusSearch() {
-        if currentPage != .search { selectPage(.search) }
         searchFocusRequest += 1
-        // 只有搜索页消费 ⌘F：其它常驻页拿到的是各自最后一次的请求值，不会被隐藏聚焦
-        tabFocusRequest[.search] = searchFocusRequest
+        // 把这次聚焦请求交给当前页（常驻页走各自的 tabFocusRequest；二级详情直接用
+        // searchFocusRequest）。不再跳到搜索页 —— 搜索框常驻顶栏，结果页只负责展示。
+        if let activeTab {
+            tabFocusRequest[activeTab] = searchFocusRequest
+        }
+    }
+
+    /// 顶栏搜索框提交：把搜索结果页压进当前导航栈，返回时回到原来的页面。
+    /// 已经在搜索结果页时不重复入栈（查询本身是实时更新的）。
+    private func openSearch() {
+        guard currentPage != .search else { return }
+        push(.search)
     }
 
     /// 打开设置窗口。实现见文件末尾的 `SettingsOpener`：
@@ -780,8 +788,7 @@ private struct SidebarPanel: View {
         (.home, "house", "首页"),
         (.library, "square.grid.2x2", "资料库"),
         (.playlists, "music.note.list", "播放列表"),
-        (.nowPlaying, "opticaldisc", "正在播放"),
-        (.search, "magnifyingglass", "搜索")
+        (.nowPlaying, "opticaldisc", "正在播放")
     ]
 
     var body: some View {
