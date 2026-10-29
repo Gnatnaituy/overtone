@@ -82,8 +82,12 @@ struct SettingsView: View {
         // 注意 id 只包 HStack（内容），`group` / 滚动位置等 @State 挂在 SettingsView 上，
         // 所以切换风格不会把用户踢回「通用」分组。
         .id(visualStyle)
-        // macOS 标准设置窗口：固定 720×560（§4.5）
-        .frame(width: 720, height: 560)
+        // 设置窗口：导航 180 + 内容列 640（窗口 880×560）。
+        // 原先 720×480 的表单列太窄，行里「左侧标签 + 说明」与右侧控件经常挤在一起。
+        .frame(
+            width: Theme.Size.settingsWindowWidth,
+            height: Theme.Size.settingsWindowHeight
+        )
         .background(Theme.canvas)
         // 设置是独立 scene：挂一份共享 `DialogCenter` 的呈现层，让二次确认落在当前窗口。
         // 弹窗 UI 本身在 Components.swift（`ConfirmDialog`），这里只是把它接到设置窗口上。

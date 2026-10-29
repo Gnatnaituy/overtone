@@ -55,7 +55,11 @@ struct NowPlayingView: View {
                     // 主体不参与内容列宽度协商：宽窗「主区 + 320 右栏」的最小宽度超过
                     // 内容列时（侧栏可拖到 320），顶栏会被撑宽并溢出窗口右缘（§7.2 规则 3）
                     .pageBodyWidthClamp()
+                    // 顶栏之外的主体要吃掉剩余高度：否则 VStack 按内容固有高度排版，
+                    // 正在播放页的实体卡只到一半、下半页露出空氛围层（2026-10-29 用户反馈）。
+                    .frame(maxHeight: .infinity, alignment: .top)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
                 // 窄窗：待播抽屉 + 遮罩（宽窗走右栏，不叠层）
                 if !sizeClass.nowPlayingUsesSideQueue {
@@ -158,12 +162,20 @@ struct NowPlayingView: View {
     // MARK: - 窄窗口布局（单列 + 底部待播抽屉）
 
     private func narrowLayout(height: CGFloat) -> some View {
-        ScrollView {
-            mainCard(maxCover: min(sizeClass.nowPlayingCoverMax, max(height * 0.34, 140)))
+        // 底部「待播 N 首」入口的预留高度；卡片至少要吃掉「页高 − 上边距 − 底部入口」，
+        // 否则 W0–W2 的单列布局只渲染出内容固有高度，下半页会露出一大片空氛围层。
+        let bottomInset: CGFloat = 76
+        let topInset = Theme.Spacing.xxl
+        let cardHeight = max(height - topInset - bottomInset, 420)
+
+        return ScrollView {
+            mainCard(maxCover: min(sizeClass.nowPlayingCoverMax, max(cardHeight - 320, 140)))
+                // minHeight 而不是 height：标题换行 / 歌词内容超出时允许卡片自然变高，
+                // 由外层 ScrollView 滚动，不裁切控件。
+                .frame(minHeight: cardHeight)
                 .padding(.horizontal, sizeClass.pageMargin)
-                .padding(.top, Theme.Spacing.xxl)
-                // 给底部「待播 N 首」入口留位，避免盖住控制行
-                .padding(.bottom, 76)
+                .padding(.top, topInset)
+                .padding(.bottom, bottomInset)
         }
         .scrollIndicators(.hidden)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -176,6 +188,11 @@ struct NowPlayingView: View {
 
         return VStack(spacing: Theme.Spacing.xxl) {
             coverLyricsSwitch
+
+            // 卡片撑满整页后，把「封面 + 进度 + 控制」作为一组垂直居中，
+            // 避免内容全挤在顶部、卡片下半截空着。
+            // 窄窗内容不足时 Spacer 最小长度为 0，不会把卡片撑破（多出来由 ScrollView 滚动）。
+            Spacer(minLength: 0)
 
             // 封面 / 歌词共用**同一块**位置：封面永远留在布局里（切到歌词时只是透明），
             // 歌词走 `overlay` —— overlay 不影响父视图尺寸，于是这一块的高度恒等于封面块，
@@ -200,6 +217,8 @@ struct NowPlayingView: View {
                 .frame(maxWidth: 480)
 
             controls
+
+            Spacer(minLength: 0)
 
             if let error = music.errorMessage {
                 HStack(spacing: Theme.Spacing.sm) {

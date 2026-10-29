@@ -18,6 +18,10 @@
 |---|---|
 | ![设置 · 外观](docs/screenshots/06-settings.jpg) | ![窄窗口图标栏](docs/screenshots/07-narrow-rail.jpg) |
 
+| 棱镜 · 浅色（v6） | 棱镜 · 深色正在播放（v6） |
+|---|---|
+| ![棱镜 · 浅色](docs/screenshots/08-prism-home.jpg) | ![棱镜 · 深色正在播放](docs/screenshots/09-prism-nowplaying.jpg) |
+
 ## 功能
 
 - **双后端**：登录页选「Jellyfin」或「飞牛音乐」；两套后端共用同一套界面与播放链路，设置页可切换；凭据按后端分别保存，同名账号互不覆盖
@@ -30,7 +34,7 @@
 - **详情页**：专辑 / 艺人 / 播放列表统一骨架 —— 面包屑返回栏 + 大封面头部 + 曲目表
 - **搜索**：搜索框常驻内容区顶栏（⌘F 聚焦），结果按歌曲 / 专辑 / 艺人 / 播放列表分组
 - **设置页**：通用 / 播放 / 外观 / 媒体库 / 听歌记录 / 服务器与账号 / 关于 七个分组（⌘, 打开）
-- **视觉风格双轨**：外观里可切「玻璃 Liquid Glass」（v3，默认）/「纸墨 Tape & Signal」（v4）——即时生效、重启保持；两套风格共用同一份信息架构与五档断点，切风格不丢导航与搜索词
+- **视觉风格三轨**：外观里可切「玻璃 Liquid Glass」（v3，默认）/「纸墨 Tape & Signal」（v4）/「棱镜 Prism」（v6）——即时生效、重启保持；三套风格共用同一份信息架构与五档断点，切风格不丢导航与搜索词
 - **播放器**：原生 AVPlayer，全局迷你播放条（三区布局，窄窗降级两区），正在播放页（大封面 + 5 键控制 + 待播清单 + 歌词 + 睡眠定时）
 - **播放衔接**：下一首预取；双播放器真交叉淡化（可设 0–12s，手动切歌约 1s 过渡；转码 / HLS / 未预取时降级为淡出→直切）；队列播完后自动用 Jellyfin InstantMix 续播相似歌曲；队列可跨重启恢复（同后端、7 天内、默认不自动播放）
 - **歌词**：同步歌词滚动；歌词偏移 ±2s（补偿蓝牙延迟）；沉浸式全屏歌词（点行跳转、Esc 退出）
@@ -105,10 +109,11 @@ Sources/JellyfinMac/
 分层与「加第三个后端要动哪些文件」见 [多后端架构](docs/architecture-multibackend.md)。
 
 设计令牌全部收敛在 `Sources/JellyfinMac/Theme.swift`，页面里不出现硬编码色值与圆角；字号统一走
-`.textStyle(_:)`，随系统文本大小缩放。令牌分两套「视觉风格」同时构造、切换只换引用
-（`VisualStyle.glass` / `.paper`，页面侧一律写 `Theme.isPaper ? 纸墨 : 原玻璃代码`），
-所以两套皮肤共享同一份视图与断点，玻璃模式的取值与 v3 逐字节一致。可访问性：图标按钮均有
-`accessibilityLabel`，hover 控件在键盘聚焦时同样出现，进度条可键盘 ±5s 微调，尊重系统「减少动态效果」。
+`.textStyle(_:)`，随系统文本大小缩放。令牌分三套「视觉风格」同时构造、切换只换引用
+（`VisualStyle.glass` / `.paper` / `.prism`，页面侧一律写 `Theme.isPaper ? 纸墨 : 原玻璃代码`，
+棱镜复用玻璃的视图结构、只换令牌与材质），所以三套皮肤共享同一份视图与断点，玻璃模式的取值与 v3
+逐字节一致。可访问性：图标按钮均有 `accessibilityLabel`，hover 控件在键盘聚焦时同样出现，
+进度条可键盘 ±5s 微调，尊重系统「减少动态效果」。
 
 ## 已知限制
 
@@ -132,6 +137,7 @@ Sources/JellyfinMac/
 - [接入飞牛云 NAS 工作量评估](docs/fnos-integration-assessment.md)：三条路径（NAS 装 Jellyfin 零改动 / 自研飞牛音乐私有协议 / 通用 Subsonic 后端）的人日估算、功能落差与 P0 spike 清单；支撑调研见 [`docs/research/`](docs/research/)
 - [界面设计规范 v5「暖阳胶片」](docs/ui-design/UI-Redesign-v5.md) · [高保真预览](docs/ui-design/UI-Redesign-v5-preview.html)（Magazine 摄影风 · 日光 / 暗房双主题 + 强调色 / 宽窄窗切换；**规范与预览已出，尚未落地**，落地路径见规范 §9）
 - [界面设计规范 v4「纸带与信号」](docs/ui-design/UI-Redesign-v4.md) · [高保真预览](docs/ui-design/UI-Redesign-v4-preview.html)（Editorial 印刷风 · 双主题 + 强调色/宽窄窗切换）；[界面设计规范 v3](docs/ui-design/UI-Redesign-v3.md) · [高保真预览](docs/ui-design/UI-Redesign-v3-preview.html)（双主题 + 材质开关）；早期 [v2 规范](docs/ui-design/UI-Design-Spec.md) · [v2 预览](docs/ui-design/preview.html)
+- [视觉风格 v6「棱镜 Prism」](docs/ui-design/Prism.md)：Primuse / Apple Music 式白卡 + 紫调强调 + 大圆角，令牌与接入规则
 - [构建笔记](docs/build-notes.md)：外观为什么取决于 SDK 版本、没有 Xcode 时的宏插件兜底、自动打包
 - [应用图标](docs/app-icon.md)：主图规范与换图标流程
 - [命名与内部标识](docs/naming.md)：产品名与 target / Bundle ID / 数据目录的解耦

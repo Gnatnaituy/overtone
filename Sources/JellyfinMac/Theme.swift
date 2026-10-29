@@ -63,7 +63,7 @@ extension NSColor {
     }
 }
 
-/// 视觉风格：v3「Liquid Glass」与 v4「纸带与信号」并存，设置里即时切换。
+/// 视觉风格：v3「Liquid Glass」、v4「纸带与信号」、v6「棱镜 Prism」并存，设置里即时切换。
 ///
 /// 顶格声明（不嵌套在 `Theme` 里、不做隔离）：设置项、环境值、视图分支都要能直接引用它，
 /// 嵌进 `Theme` 会逼着每个消费方写 `Theme.VisualStyle` 这种长名字，也让 `Env` 键默认值的
@@ -73,6 +73,8 @@ enum VisualStyle: String, CaseIterable, Identifiable, Sendable {
     case glass
     /// v4 纸带与信号 —— 纸墨 + 细线 + 零投影
     case paper
+    /// v6 棱镜 Prism —— 白卡 + 大圆角 + 紫调强调 + 封面取色（Apple Music / Primuse 式轻盈感）
+    case prism
 
     var id: String { rawValue }
 
@@ -80,6 +82,7 @@ enum VisualStyle: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .glass: return "玻璃"
         case .paper: return "纸墨"
+        case .prism: return "棱镜"
         }
     }
 
@@ -88,8 +91,12 @@ enum VisualStyle: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .glass: return "玻璃材质、圆角与投影，层次靠材质与光"
         case .paper: return "纸墨质感、1px 细线与零投影，层次靠纸墨反差"
+        case .prism: return "白卡、大圆角与紫调强调，轻盈通透的 Apple Music 风"
         }
     }
+
+    /// 是否「棱镜」—— 复用玻璃的视图结构，只换令牌与材质（页面分支统一写 `Theme.isPrism`）。
+    var isPrism: Bool { self == .prism }
 
     /// 无障碍标签（分段控件读屏用）
     var accessibilityName: String { "视觉风格：\(title)" }
@@ -169,6 +176,32 @@ struct AccentRamp {
     /// 纸墨（v4）用预览文件头 `data-accent` 的成对色值：浅色是「墨色」版本，
     /// 深色是提亮版本（深底上原色对比度不足）。玻璃（v3）沿用原色，取色不变。
     static func forChoice(_ choice: AppSettings.AccentChoice, style: VisualStyle) -> AccentRamp {
+        // 棱镜（v6）：比玻璃更饱和、更「屏幕发光」的一组色阶 ——
+        // 白卡/浅灰底上需要更高色度才压得住，深色下则提亮到接近霓虹。
+        if style == .prism {
+            switch choice {
+            case .indigo:
+                return .fixed(
+                    base: 0x5B5BF0, light: 0x7C7BFF, dark: 0x4A48D8, text: 0xB3B2FF,
+                    darkBase: 0x8A88FF, darkLight: 0xA8A6FF, darkDark: 0x6E6CF0
+                )
+            case .teal:
+                return .fixed(
+                    base: 0x06B6D4, light: 0x22D3EE, dark: 0x0891B2, text: 0x67E8F9,
+                    darkBase: 0x22D3EE, darkLight: 0x67E8F9, darkDark: 0x0891B2
+                )
+            case .purple:
+                return .fixed(
+                    base: 0x8B5CF6, light: 0xA78BFA, dark: 0x7C3AED, text: 0xC4B5FD,
+                    darkBase: 0xA78BFA, darkLight: 0xC4B5FD, darkDark: 0x8B5CF6
+                )
+            case .signal:
+                return .fixed(
+                    base: 0xF43F5E, light: 0xFB7185, dark: 0xE11D48, text: 0xFDA4AF,
+                    darkBase: 0xFB7185, darkLight: 0xFDA4AF, darkDark: 0xF43F5E
+                )
+            }
+        }
         guard style == .paper else {
             switch choice {
             case .indigo: return .fixed(base: 0x4C53D8, light: 0x6B71E3, dark: 0x3E45C0, text: 0xA5AAFF)
@@ -221,16 +254,19 @@ struct AccentTokens {
     let surfaceSelected: Color
     let gradient: LinearGradient
 
-    /// - Parameter paper: 纸墨模式。v4 的强调色染色浓度更高（预览 `--signal-tint`：
-    ///   浅 9–10% / 深 14–16%）；玻璃模式沿用原浓度（浅 8% / 深 16%·18%），取色逐字节不变。
+    /// - Parameter style: 当前视觉风格。v4 纸墨的染色浓度更高（预览 `--signal-tint`：
+    ///   浅 9–10% / 深 14–16%）；v6 棱镜再提一档（浅 12% / 深 22–24%，白卡上需要更明显的
+    ///   选中底）；玻璃沿用原浓度（浅 8% / 深 16%·18%），取色逐字节不变。
     ///   风格切换会整体重建本结构，所以这里的分支不会「换了风格不生效」。
-    init(_ ramp: AccentRamp, paper: Bool = false) {
+    init(_ ramp: AccentRamp, style: VisualStyle = .glass) {
         // 色阶由闭包捕获（不是在绘制时读全局）：`accentRamp` 的 didSet 会整体重建本结构，
         // 所以缓存里的色阶始终是当前那一套
-        let tintAlphaLight: Double = paper ? 0.10 : 0.08
-        let tintAlphaDark: Double = paper ? 0.16 : 0.16
-        let selectedAlphaLight: Double = paper ? 0.10 : 0.08
-        let selectedAlphaDark: Double = paper ? 0.18 : 0.18
+        let paper = style == .paper
+        let prism = style == .prism
+        let tintAlphaLight: Double = prism ? 0.12 : (paper ? 0.10 : 0.08)
+        let tintAlphaDark: Double = prism ? 0.22 : (paper ? 0.16 : 0.16)
+        let selectedAlphaLight: Double = prism ? 0.14 : (paper ? 0.10 : 0.08)
+        let selectedAlphaDark: Double = prism ? 0.24 : (paper ? 0.18 : 0.18)
         brand400 = Color(appearanceDynamic: { $0.isDark ? ramp.lightDark : ramp.light })
         brand500 = Color(appearanceDynamic: { $0.isDark ? ramp.baseDark : ramp.base })
         brand600 = Color(appearanceDynamic: { $0.isDark ? ramp.darkDark : ramp.dark })
@@ -305,11 +341,11 @@ enum Theme {
     /// 否则每次访问都返回不相等的 `Color`，SwiftUI 的相等性跳过机制全部失效
     /// （原因与实测数据见 `AccentTokens`）。
     static var accentRamp: AccentRamp = .forChoice(.indigo, style: .glass) {
-        didSet { accentTokens = AccentTokens(accentRamp, paper: isPaper) }
+        didSet { accentTokens = AccentTokens(accentRamp, style: visualStyle) }
     }
 
     /// 品牌令牌缓存（首次访问时按当前 `accentRamp` 构造）
-    private static var accentTokens = AccentTokens(accentRamp, paper: false)
+    private static var accentTokens = AccentTokens(accentRamp, style: .glass)
 
     static var brand400: Color { accentTokens.brand400 }
     /// 主色**实底**：浅色主题用 500 档、深色主题用提亮档（v4 深浅分档；玻璃下两者同值）
@@ -337,7 +373,7 @@ enum Theme {
 
     static var brandGradient: LinearGradient { accentTokens.gradient }
 
-    // MARK: 视觉风格（v3 玻璃 / v4 纸墨）
+    // MARK: 视觉风格（v3 玻璃 / v4 纸墨 / v6 棱镜）
 
     /// 当前风格镜像（非隔离静态量，任意上下文可读；取值只从 `state` 缓存来）
     static var visualStyle: VisualStyle = .glass {
@@ -347,25 +383,37 @@ enum Theme {
     /// 是否纸墨模式 —— 页面里所有风格分支都写成 `Theme.isPaper ? 纸墨 : 原玻璃代码`
     static var isPaper: Bool { visualStyle == .paper }
 
-    /// 风格化令牌缓存：玻璃 / 纸墨两套**同时构造一次**，切换只是换引用。
+    /// 是否棱镜模式 —— 复用玻璃的视图结构，只换令牌 / 材质 / 圆角；
+    /// 页面里需要为「白卡 + 大圆角 + 紫调」单独处理时读它。
+    static var isPrism: Bool { visualStyle == .prism }
+
+    /// 风格化令牌缓存：玻璃 / 纸墨 / 棱镜三套**同时构造一次**，切换只是换引用。
     ///
-    /// 为什么两套都留着：`active` 每次访问都要返回同一个 `Color` 实例（原因见 `AccentTokens`），
+    /// 为什么三套都留着：`active` 每次访问都要返回同一个 `Color` 实例（原因见 `AccentTokens`），
     /// 所以不能在 `active` 里按风格现算 —— 来回切换风格必须命中同一批实例。
     private struct StyleState {
         let glass = GlassTokens()
         let ink = InkTokens()
+        let prism = PrismTokens()
         let active: Palette
         /// 形状族（圆角）随风格走，缓存成值类型供 `Theme.Radius` 直接读
         let radius: Radii
 
         init(style: VisualStyle, accent: AccentRamp) {
-            let paper = style == .paper
-            active = paper ? ink.palette : glass.palette
-            radius = paper
-                ? Radii(xs: 2, sm: 3, md: 3, lg: 4, xl: 6, cover: 2)
-                : Radii(xs: 4, sm: 6, md: 10, lg: 14, xl: 20, cover: 10)
-            // 风格参与强调色令牌的构造（v4 染色浓度不同），换风格必须一起重建
-            accentTokens = AccentTokens(accent, paper: paper)
+            switch style {
+            case .glass:
+                active = glass.palette
+                radius = Radii(xs: 4, sm: 6, md: 10, lg: 14, xl: 20, cover: 10)
+            case .paper:
+                active = ink.palette
+                radius = Radii(xs: 2, sm: 3, md: 3, lg: 4, xl: 6, cover: 2)
+            case .prism:
+                active = prism.palette
+                // 棱镜：Apple Music 式大圆角（卡片 12 / 面板 12 / 大卡 22，封面 10）
+                radius = Radii(xs: 6, sm: 8, md: 12, lg: 16, xl: 22, cover: 10)
+            }
+            // 风格参与强调色令牌的构造（v4 / v6 染色浓度不同），换风格必须一起重建
+            accentTokens = AccentTokens(accent, style: style)
         }
     }
 
@@ -484,6 +532,93 @@ enum Theme {
 
         let inverseSurface = Color(token: 0x14171C, 0xF2F4F8)
         let textOnInverse = Color(token: 0xFFFFFF, 0x14171C)
+
+        var palette: Palette { Palette(self) }
+    }
+
+    /// 棱镜（v6）令牌面：Apple Music / Primuse 式的「白卡 + 浅灰画布 + 紫调强调」。
+    ///
+    /// 与玻璃的差别不在结构（视图仍走玻璃分支），而在：
+    /// - 表面更实、更亮（白卡而非磨砂玻璃），层级靠柔和投影与 1px 冷灰细线；
+    /// - 圆角更大（面板 12 / 大卡 22），更接近 Apple Music 的圆润感；
+    /// - 氛围层是紫罗兰 / 青 / 粉的低饱和 wash，配合封面取色；
+    /// - 强调色色阶更饱和（`AccentRamp.forChoice(_:style: .prism)`）。
+    ///
+    /// 深色主题下就是 Primuse 沉浸播放页的底：近黑底 + 更亮的表面 + 霓虹紫。
+    private struct PrismTokens {
+        let canvas = Color(token: 0xF3F4FA, 0x0B0C12)
+        let surface = Color(token: 0xFFFFFF, 0x151822)
+        let surfaceSunken = Color(token: 0xECEEF6, 0x1C202C)
+        let surfaceHover = Color(token: 0xE7E9F4, 0x242936)
+
+        let borderSubtle = Color(token: 0xE6E8F1, 0x262C3A)
+        let borderDefault = Color(token: 0xD9DCE9, 0x343B4D)
+        let borderStrong = Color(token: 0xC3C7D8, 0x4A536A)
+
+        let textPrimary = Color(token: 0x11131B, 0xF4F6FB)
+        let textSecondary = Color(token: 0x5A6072, 0xAAB2C4)
+        let textTertiary = Color(token: 0x8A90A2, 0x7C859A)
+
+        let overtoneTeal = Color(token: 0x0EA5A0, 0x2DD4BF)
+        let tealText = Color(token: 0x0B7C74, 0x5EEAD4)
+        let tealTint = Color(appearanceDynamic: { appearance in
+            NSColor(srgbHex: 0x0EA5A0).withAlphaComponent(appearance.isDark ? 0.20 : 0.10)
+        })
+
+        let success = Color(token: 0x12855F, 0x3DDC97)
+        let warning = Color(token: 0xB45309, 0xFBBF24)
+        let danger = Color(token: 0xDC2626, 0xF87171)
+        let favorite = Color(token: 0xEC4899, 0xF472B6)
+
+        let scrim = Color(appearanceDynamic: { appearance in
+            NSColor(srgbHex: 0x0B1020).withAlphaComponent(appearance.isDark ? 0.36 : 0.24)
+        })
+        let shimmer = Color(appearanceDynamic: { appearance in
+            NSColor.white.withAlphaComponent(appearance.isDark ? 0.07 : 0.80)
+        })
+
+        let glassBorder = Color(appearanceDynamic: { appearance in
+            NSColor.white.withAlphaComponent(appearance.isDark ? 0.12 : 0.90)
+        })
+        let glassFill = Color(appearanceDynamic: { appearance in
+            appearance.isDark
+                ? NSColor(srgbHex: 0x161A24).withAlphaComponent(0.78)
+                : NSColor.white.withAlphaComponent(0.82)
+        })
+        let glassFillStrong = Color(appearanceDynamic: { appearance in
+            appearance.isDark
+                ? NSColor(srgbHex: 0x1B202C).withAlphaComponent(0.88)
+                : NSColor.white.withAlphaComponent(0.94)
+        })
+        let glassFillThin = Color(appearanceDynamic: { appearance in
+            appearance.isDark
+                ? NSColor(srgbHex: 0x14171F).withAlphaComponent(0.72)
+                : NSColor.white.withAlphaComponent(0.72)
+        })
+        let glassHighlight = Color(appearanceDynamic: { appearance in
+            NSColor.white.withAlphaComponent(appearance.isDark ? 0.12 : 0.85)
+        })
+        let glassShadow = Color(appearanceDynamic: { appearance in
+            NSColor(srgbHex: 0x0B1020).withAlphaComponent(appearance.isDark ? 0.16 : 0.10)
+        })
+
+        let ambientIndigo = Color(appearanceDynamic: { appearance in
+            NSColor(srgbHex: 0x7C6CFF).withAlphaComponent(appearance.isDark ? 0.32 : 0.24)
+        })
+        let ambientTeal = Color(appearanceDynamic: { appearance in
+            NSColor(srgbHex: 0x22D3EE).withAlphaComponent(appearance.isDark ? 0.20 : 0.16)
+        })
+        let ambientRose = Color(appearanceDynamic: { appearance in
+            NSColor(srgbHex: 0xF472B6).withAlphaComponent(appearance.isDark ? 0.20 : 0.18)
+        })
+        let ambientAmber = Color(appearanceDynamic: { appearance in
+            NSColor(srgbHex: 0xFDBA74).withAlphaComponent(appearance.isDark ? 0.14 : 0.14)
+        })
+        let ambientBaseTop = Color(token: 0xF2F3FA, 0x0E1020)
+        let ambientBaseBottom = Color(token: 0xF8F5FA, 0x090A10)
+
+        let inverseSurface = Color(token: 0x10131A, 0xF4F6FB)
+        let textOnInverse = Color(token: 0xFFFFFF, 0x10131A)
 
         var palette: Palette { Palette(self) }
     }
@@ -688,6 +823,46 @@ enum Theme {
             inverseSurface = t.inverseSurface
             textOnInverse = t.textOnInverse
             // 玻璃下没有「固定版头」概念，等价物就是反色层（浅色深底 / 深色浅底）
+            panelFill = t.inverseSurface
+            panelInk = t.textOnInverse
+        }
+
+        /// 棱镜风格：字段与玻璃一一对应，只是取值换成白卡 / 紫调那一套。
+        init(_ t: PrismTokens) {
+            canvas = t.canvas
+            surface = t.surface
+            surfaceSunken = t.surfaceSunken
+            surfaceHover = t.surfaceHover
+            borderSubtle = t.borderSubtle
+            borderDefault = t.borderDefault
+            borderStrong = t.borderStrong
+            textPrimary = t.textPrimary
+            textSecondary = t.textSecondary
+            textTertiary = t.textTertiary
+            overtoneTeal = t.overtoneTeal
+            tealText = t.tealText
+            tealTint = t.tealTint
+            success = t.success
+            warning = t.warning
+            danger = t.danger
+            favorite = t.favorite
+            scrim = t.scrim
+            shimmer = t.shimmer
+            glassBorder = t.glassBorder
+            glassFill = t.glassFill
+            glassFillStrong = t.glassFillStrong
+            glassFillThin = t.glassFillThin
+            glassHighlight = t.glassHighlight
+            glassShadow = t.glassShadow
+            ambientIndigo = t.ambientIndigo
+            ambientTeal = t.ambientTeal
+            ambientRose = t.ambientRose
+            ambientAmber = t.ambientAmber
+            ambientBaseTop = t.ambientBaseTop
+            ambientBaseBottom = t.ambientBaseBottom
+            inverseSurface = t.inverseSurface
+            textOnInverse = t.textOnInverse
+            // 棱镜的登录左栏 / 播放页大字同样走反色层（白底深字 / 深底浅字）
             panelFill = t.inverseSurface
             panelInk = t.textOnInverse
         }
@@ -1040,7 +1215,12 @@ enum Theme {
         static let queuePanelWidth: CGFloat = 320
         /// 设置窗口
         static let settingsNavWidth: CGFloat = 180
-        static let settingsFormWidth: CGFloat = 480
+        /// 设置内容列的最大宽度：720 窗口时代是 480，内容列被两侧留白挤得很窄
+        /// （表单卡只有 480）；加宽到 640 后，带说明文字 + 右侧控件的行不再互相挤。
+        static let settingsFormWidth: CGFloat = 640
+        /// 设置窗口尺寸：导航 180 + 分隔线 + 内容列（640 + 两边 20 留白）
+        static let settingsWindowWidth: CGFloat = 880
+        static let settingsWindowHeight: CGFloat = 560
     }
 
     // MARK: - 字体层级（相对动态字号，最小 11pt）
@@ -1409,6 +1589,9 @@ private struct GlassPanelModifier: ViewModifier {
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius)
         let paper = Theme.isPaper
+        // 棱镜：不调用 Material / glassEffect —— 白卡 + 柔和投影就是这套风格的全部材质。
+        // 与纸墨的区别是「有投影、圆角更大、表面是纯白而不是纸色」。
+        let prism = Theme.isPrism
         content
             .background { backdrop(shape: shape) }
             .overlay {
@@ -1416,14 +1599,14 @@ private struct GlassPanelModifier: ViewModifier {
             }
             .overlay {
                 shape.strokeBorder(
-                    paper || reduceTransparency || !glassSurfaces
+                    paper || prism || reduceTransparency || !glassSurfaces
                         ? (paper ? Theme.Paper.hairline : Theme.borderSubtle)
                         : Theme.glassBorder
                 )
             }
             .overlay(alignment: .top) {
-                // 顶部镜面高光：1px 内高光，让玻璃「有厚度」（纸墨无高光）
-                if !paper && !reduceTransparency && glassSurfaces {
+                // 顶部镜面高光：1px 内高光，让玻璃「有厚度」（纸墨 / 棱镜无高光）
+                if !paper && !prism && !reduceTransparency && glassSurfaces {
                     Rectangle()
                         .fill(Theme.glassHighlight)
                         .frame(height: 1)
@@ -1440,6 +1623,9 @@ private struct GlassPanelModifier: ViewModifier {
             // 纸墨：不透明纸面，**不调用任何 Material / glassEffect** ——
             // v4 的 chrome 直接落在纸面上（`Paper.sheet`），透出下层氛围反而会脏
             shape.fill(Theme.Paper.sheet)
+        } else if Theme.isPrism {
+            // 棱镜：纯白 / 深灰实底卡，投影与细线做层级（Apple Music 式）
+            shape.fill(Theme.surface)
         } else if reduceTransparency || !glassSurfaces {
             // 回退：surface 实底（对比度复核过的组合）
             shape.fill(Theme.surface)
@@ -1460,6 +1646,16 @@ private struct GlassShadow: ViewModifier {
     /// 单层投影参数（nil 档位 / 纸墨 = 不投影）
     private var shadow: (opacity: Double, radius: CGFloat, y: CGFloat)? {
         if Theme.isPaper { return nil }
+        // 棱镜：投影要比玻璃更「浮」一点（白卡需要阴影才能离开浅灰画布），
+        // 半径更大、透明度略低，接近 Apple Music 的柔和悬浮。
+        if Theme.isPrism {
+            switch elevation {
+            case .none: return nil
+            case .e1: return (solid ? 0.05 : 0.08, 6, 3)
+            case .e2: return (solid ? 0.07 : 0.12, 16, 8)
+            case .e3: return (solid ? 0.10 : 0.16, 28, 16)
+            }
+        }
         switch elevation {
         case .none: return nil
         case .e1: return (solid ? 0.06 : 0.10, 4, 2)
@@ -1524,17 +1720,18 @@ private struct GlassControlModifier: ViewModifier {
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius)
         let paper = Theme.isPaper
+        let prism = Theme.isPrism
         content
             .background { shape.fill(fill) }
             .overlay {
                 shape.strokeBorder(
                     paper ? Theme.Paper.hairline
-                        : (solid ? Theme.borderDefault : Theme.glassBorder)
+                        : (prism ? Theme.borderSubtle : (solid ? Theme.borderDefault : Theme.glassBorder))
                 )
             }
             .overlay(alignment: .top) {
-                // 纸墨：无高光，控件只是一个纸面 + 1px 细线
-                if !paper && !solid {
+                // 纸墨 / 棱镜：无高光，控件只是一个实底 + 1px 细线
+                if !paper && !prism && !solid {
                     Rectangle()
                         .fill(Theme.glassHighlight)
                         .frame(height: 1)
@@ -1550,6 +1747,10 @@ private struct GlassControlModifier: ViewModifier {
         // 纸墨：无玻璃，控件底直接是纸（thin 档用凹陷纸，与分段容器/输入框的 v3 语义对齐）
         if Theme.isPaper {
             return strength == .thin ? Theme.Paper.sunken : Theme.Paper.sheet
+        }
+        // 棱镜：白卡风格 —— 分段容器 / 输入框用浅灰凹陷，按钮用白底
+        if Theme.isPrism {
+            return strength == .thin ? Theme.surfaceSunken : Theme.surface
         }
         guard !solid else {
             // 实底场景：分段容器/输入框回落 sunken，按钮回落 surface
@@ -1602,7 +1803,9 @@ struct AmbientWash: View {
                 // 纸墨：氛围层整体不渲染，窗口底就是纸面纯色（v4 §2.1「不用投影、靠纸墨反差」）。
                 // 颜色仍走令牌（`Theme.Paper.canvas`），结构由订阅到的 `appStyle` 决定。
                 Theme.Paper.canvas
-                if appStyle == .glass {
+                // 玻璃与棱镜都渲染氛围层（棱镜的白卡需要底下有淡彩才不呆板）；
+                // 纸墨整体不渲染，窗口底就是纸面纯色（v4 §2.1「不用投影、靠纸墨反差」）。
+                if appStyle == .glass || appStyle == .prism {
                     LinearGradient(
                         colors: [Theme.ambientBaseTop, Theme.ambientBaseBottom],
                         startPoint: .topLeading,

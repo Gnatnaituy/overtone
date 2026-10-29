@@ -45,6 +45,7 @@ done
 case "$STYLE" in
     玻璃) STYLE=glass ;;
     纸墨) STYLE=paper ;;
+    棱镜) STYLE=prism ;;
 esac
 ARGV=()
 [ -n "$STYLE" ] && ARGV+=(-settings.visualStyle "$STYLE")
