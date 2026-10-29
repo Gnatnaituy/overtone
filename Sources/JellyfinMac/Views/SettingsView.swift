@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// 设置页（§2.4）：左侧分组导航 180 + 右侧表单 480，六组一切换。
+/// 设置页（§2.4）：左侧分组导航 180 + 右侧表单 480，七组一切换。
 ///
 /// 结构分层：`SettingsView`（窗口骨架 + 分组路由）→ `SettingsGroupCard`（`surface` 实底卡）
 /// → `SettingsRow`（左标签 13/500 + 说明 11 + 右控件，行高 ≥44）。
@@ -11,18 +11,25 @@ struct SettingsView: View {
     @Environment(\.appVisualStyle) private var visualStyle
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var store = MusicDataStore.shared
+    @ObservedObject private var scrobble = ScrobbleSettings.shared
+    /// 待补报条数随队列变化（失败静默，只有这两个数字会出现在界面上）
+    @ObservedObject private var scrobbleService = ScrobbleService.shared
 
     @State private var group: Group = .general
     @State private var isRefreshing = false
     @State private var cacheCleared = false
     @State private var cacheUsage: CacheUsage = .measuring
+    /// 凭据输入草稿：Secret / 令牌读回后不回显，保存成功即清空
+    @State private var lastFMSecretDraft = ""
+    @State private var listenBrainzTokenDraft = ""
 
-    /// 六个分组（§2.4：通用 / 播放 / 外观 / 媒体库 / 服务器与账号 / 关于）
+    /// 七个分组（§2.4：通用 / 播放 / 外观 / 媒体库 / 听歌记录 / 服务器与账号 / 关于）
     enum Group: String, CaseIterable, Identifiable {
         case general = "通用"
         case playback = "播放"
         case appearance = "外观"
         case library = "媒体库"
+        case scrobble = "听歌记录"
         case account = "服务器与账号"
         case about = "关于"
 
@@ -35,6 +42,7 @@ struct SettingsView: View {
             case .playback: return "play.circle"
             case .appearance: return "circle.lefthalf.filled"
             case .library: return "square.grid.2x2"
+            case .scrobble: return "waveform.path.ecg"
             case .account: return "server.rack"
             case .about: return "info.circle"
             }
@@ -113,6 +121,7 @@ struct SettingsView: View {
         case .playback: playbackGroup
         case .appearance: appearanceGroup
         case .library: libraryGroup
+        case .scrobble: scrobbleGroup
         case .account: accountGroup
         case .about: aboutGroup
         }
@@ -149,29 +158,55 @@ struct SettingsView: View {
 
     private var playbackGroup: some View {
         SettingsGroupCard(title: "播放") {
-            SettingsRow(label: "音质", detail: settings.quality.detail) {
+            SettingsRow(
+                label: "音质",
+                detail: capabilities.transcode
+                    ? settings.quality.detail
+                    : "当前服务器不支持转码，将始终播放原始文件"
+            ) {
                 SettingsMenu(
                     selection: settings.quality.rawValue,
                     options: AppSettings.Quality.allCases.map(\.rawValue),
                     accessibilityLabel: "音质"
                 ) { settings.quality = AppSettings.Quality(rawValue: $0) ?? .original }
+                .disabled(!capabilities.transcode)
+                .opacity(capabilities.transcode ? 1 : 0.45)
             }
             SettingsRow(label: "直连优先", detail: "容器兼容时直接播放原文件，不经过服务器转码") {
                 SettingsSwitch(isOn: $settings.preferDirectPlay, label: "直连优先")
+                    .disabled(!capabilities.transcode)
+                    .opacity(capabilities.transcode ? 1 : 0.45)
             }
-            SettingsRow(label: "交叉淡入", detail: "换曲时平滑过渡，0 表示关闭") {
+            SettingsRow(label: "交叉淡化", detail: "播完自动交叉淡化的时长；手动切歌用约 1 秒短过渡，0 表示关闭") {
                 SettingsSlider(
                     value: $settings.crossfadeSeconds,
                     range: 0...12,
                     step: 0.5,
                     text: Self.crossfadeText(settings.crossfadeSeconds),
-                    label: "交叉淡入时长"
+                    label: "交叉淡化时长"
                 )
+            }
+            SettingsRow(
+                label: "队列结束后自动续播",
+                detail: capabilities.instantMix
+                    ? "用当前歌曲的相似歌曲接着放（不再静音收尾）"
+                    : "当前服务器没有相似歌曲接口，队列播完即停止"
+            ) {
+                SettingsSwitch(isOn: $settings.autoContinue, label: "队列结束后自动续播")
+                    .disabled(!capabilities.instantMix)
+                    .opacity(capabilities.instantMix ? 1 : 0.45)
             }
             SettingsRow(label: "音量归一化", detail: "统一不同专辑的响度") {
                 SettingsSwitch(isOn: $settings.volumeNormalization, label: "音量归一化")
+                    .disabled(!capabilities.transcode)
+                    .opacity(capabilities.transcode ? 1 : 0.45)
             }
-            SettingsRow(label: "进度上报间隔", detail: "多端同步频率") {
+            SettingsRow(
+                label: "进度上报间隔",
+                detail: capabilities.playbackProgress
+                    ? "多端同步频率"
+                    : "当前服务器不支持进度上报，续播位置只保存在本机"
+            ) {
                 SettingsSlider(
                     value: $settings.reportInterval,
                     range: 5...60,
@@ -179,6 +214,8 @@ struct SettingsView: View {
                     text: "\(Int(settings.reportInterval)) 秒",
                     label: "进度上报间隔"
                 )
+                .disabled(!capabilities.playbackProgress)
+                .opacity(capabilities.playbackProgress ? 1 : 0.45)
             }
         }
     }
@@ -296,9 +333,8 @@ struct SettingsView: View {
     private func refreshLibrary() async {
         isRefreshing = true
         await appState.loadLibraries()
-        if let lib = appState.libraries.first(where: { $0.collectionType == "music" })
-            ?? appState.libraries.first {
-            store.libraryId = lib.id
+        if let lib = appState.libraries.first {
+            store.libraryID = lib.id
             await store.reload()
         }
         await PlaylistSyncService.shared.syncAll()
@@ -322,6 +358,167 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: 听歌记录
+
+    /// 「听歌记录」：总开关 / 服务选择 / 对应凭据 / 连接状态 / 隐私说明。
+    ///
+    /// 凭据分成两类落点：非机密的 API Key 直接绑到 `ScrobbleSettings.lastFMAPIKey`
+    /// （输入即存偏好设置），Secret 与用户令牌只写钥匙串、输入框保存后立即清空，
+    /// 所以界面永远不会把已保存的密钥回显出来。
+    private var scrobbleGroup: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.xxl) {
+            SettingsGroupCard(title: "听歌记录") {
+                SettingsRow(
+                    label: "记录到音乐服务",
+                    detail: "开启后把正在播放与听过的歌提交到 Last.fm / ListenBrainz"
+                ) {
+                    SettingsSwitch(isOn: $scrobble.enabled, label: "记录到音乐服务")
+                }
+
+                SettingsRow(label: "服务", detail: "同一时间只向一个服务提交") {
+                    SettingsMenu(
+                        selection: scrobble.service.displayName,
+                        options: ScrobbleServiceKind.allCases.map(\.displayName),
+                        accessibilityLabel: "听歌记录服务"
+                    ) { name in
+                        scrobble.service = ScrobbleServiceKind.allCases
+                            .first { $0.displayName == name } ?? .lastFM
+                    }
+                }
+
+                if scrobble.service == .lastFM {
+                    lastFMRows
+                } else {
+                    listenBrainzRows
+                }
+
+                SettingsRow(
+                    label: "隐私说明",
+                    detail: "歌名、艺人、专辑与播放时间会发送到 \(scrobble.service.displayName)；凭据仅存本机钥匙串，不写入日志。"
+                )
+
+                if scrobbleService.pendingCount > 0 {
+                    SettingsRow(
+                        label: "待补报记录",
+                        detail: "网络恢复后自动重试；最多保留 \(ScrobblePendingStore.capacity) 条"
+                    ) {
+                        Text("\(scrobbleService.pendingCount) 条")
+                            .textStyle(.footnote, color: Theme.textSecondary)
+                    }
+                }
+            }
+        }
+        // 进入分组时懒启动：结算上次运行遗留的会话 + 补报离线队列，并刷新钥匙串状态。
+        // 全是异步任务，不会拖慢设置页；网络失败也只更新状态文案。
+        .task {
+            ScrobbleService.shared.bootstrap()
+            await scrobble.refreshCredentialPresence()
+        }
+    }
+
+    @ViewBuilder
+    private var lastFMRows: some View {
+        SettingsRow(label: "API Key", detail: lastFMKeyDetail) {
+            ScrobbleField(
+                placeholder: "32 位 API Key",
+                text: $scrobble.lastFMAPIKey,
+                accessibilityLabel: "Last.fm API Key"
+            )
+        }
+
+        SettingsRow(
+            label: "Shared Secret",
+            detail: scrobble.hasLastFMSecret
+                ? "已保存在本机钥匙串；留空保持不变"
+                : "与 API Key 成对，保存到本机钥匙串"
+        ) {
+            HStack(spacing: Theme.Spacing.sm) {
+                ScrobbleField(
+                    placeholder: scrobble.hasLastFMSecret ? "已保存" : "粘贴 Secret",
+                    text: $lastFMSecretDraft,
+                    isSecure: true,
+                    accessibilityLabel: "Last.fm Shared Secret"
+                )
+                Button("保存") {
+                    scrobble.saveLastFMSecret(lastFMSecretDraft)
+                    lastFMSecretDraft = ""
+                }
+                .buttonStyle(SecondaryButtonStyle(compact: true))
+                .disabled(lastFMSecretDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+
+        SettingsRow(label: "Last.fm 连接", detail: scrobble.lastFMStatusText) {
+            HStack(spacing: Theme.Spacing.sm) {
+                if scrobble.lastFMState == .awaitingAuthorization {
+                    Button("完成授权") { scrobble.completeLastFMAuth() }
+                        .buttonStyle(SecondaryButtonStyle(compact: true))
+                } else if scrobble.hasLastFMSession {
+                    Button("验证") { scrobble.verifyLastFM() }
+                        .buttonStyle(SecondaryButtonStyle(compact: true))
+                } else {
+                    Button("连接") {
+                        scrobble.connectLastFM(secretInput: lastFMSecretDraft)
+                        lastFMSecretDraft = ""
+                    }
+                    .buttonStyle(SecondaryButtonStyle(compact: true))
+                }
+                if scrobble.hasLastFMSession || scrobble.lastFMState == .awaitingAuthorization {
+                    Button("断开") { scrobble.disconnectLastFM() }
+                        .buttonStyle(DangerButtonStyle(compact: true))
+                }
+            }
+            .disabled(scrobble.lastFMState.isWorking)
+        }
+    }
+
+    @ViewBuilder
+    private var listenBrainzRows: some View {
+        SettingsRow(
+            label: "用户令牌",
+            detail: scrobble.hasListenBrainzToken
+                ? "已保存在本机钥匙串；可重新粘贴覆盖"
+                : "在 listenbrainz.org/settings 复制"
+        ) {
+            HStack(spacing: Theme.Spacing.sm) {
+                ScrobbleField(
+                    placeholder: "粘贴用户令牌",
+                    text: $listenBrainzTokenDraft,
+                    isSecure: true,
+                    accessibilityLabel: "ListenBrainz 用户令牌"
+                )
+                Button("保存并验证") {
+                    scrobble.connectListenBrainz(tokenInput: listenBrainzTokenDraft)
+                    listenBrainzTokenDraft = ""
+                }
+                .buttonStyle(SecondaryButtonStyle(compact: true))
+                .disabled(listenBrainzTokenDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+
+        SettingsRow(label: "ListenBrainz 连接", detail: scrobble.listenBrainzStatusText) {
+            HStack(spacing: Theme.Spacing.sm) {
+                Button("验证") { scrobble.verifyListenBrainz() }
+                    .buttonStyle(SecondaryButtonStyle(compact: true))
+                    .disabled(!scrobble.hasListenBrainzToken)
+                if scrobble.hasListenBrainzToken {
+                    Button("断开") { scrobble.disconnectListenBrainz() }
+                        .buttonStyle(DangerButtonStyle(compact: true))
+                }
+            }
+            .disabled(scrobble.listenBrainzState.isWorking)
+        }
+    }
+
+    private var lastFMKeyDetail: String {
+        if scrobble.lastFMAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "在 last.fm/api 申请 API 账号获得；应用不内置任何密钥"
+        }
+        return scrobble.hasLastFMSecret
+            ? "API Key 已填写；修改后需重新连接"
+            : "已填 API Key，还需填写 Shared Secret"
+    }
+
     // MARK: 服务器与账号
 
     private var accountGroup: some View {
@@ -334,6 +531,23 @@ struct SettingsView: View {
             }
 
             SettingsGroupCard(title: "服务器与账号") {
+                SettingsRow(
+                    label: "服务器类型",
+                    detail: "切换后端会重新加载曲库；已保存的凭据按后端分别保留"
+                ) {
+                    SegmentedControl(
+                        segments: BackendKind.allCases.map { .init($0.rawValue, $0.displayName) },
+                        selection: Binding(
+                            get: { appState.backendKind.rawValue },
+                            set: { raw in
+                                guard let kind = BackendKind(rawValue: raw) else { return }
+                                Task { await appState.switchBackend(to: kind) }
+                            }
+                        )
+                    )
+                    .fixedSize(horizontal: true, vertical: false)
+                    .accessibilityLabel("服务器类型")
+                }
                 SettingsRow(
                     label: "服务器地址",
                     detail: appState.user != nil ? "已登录 · 修改地址需重新登录" : "未登录"
@@ -360,7 +574,7 @@ struct SettingsView: View {
                         }
                     }
                 }
-                SettingsRow(label: "当前用户", detail: APIClient.shared.baseURL?.host ?? "") {
+                SettingsRow(label: "当前用户", detail: appState.backendKind.displayName) {
                     HStack(spacing: Theme.Spacing.lg) {
                         Text(appState.user?.name ?? "—")
                             .textStyle(.bodySM, weight: .medium, color: Theme.textPrimary)
@@ -385,11 +599,16 @@ struct SettingsView: View {
     }
 
     private var serverAddress: String {
-        APIClient.shared.baseURL?.absoluteString ?? "未连接"
+        appState.backend.session?.serverURL.absoluteString ?? "未连接"
+    }
+
+    /// 当前后端的能力声明（决定哪些设置在飞牛上要置灰）
+    private var capabilities: BackendCapabilities {
+        appState.capabilities
     }
 
     private func copyServerAddress() {
-        guard let address = APIClient.shared.baseURL?.absoluteString else { return }
+        guard let address = appState.backend.session?.serverURL.absoluteString else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(address, forType: .string)
         ToastCenter.shared.show("已复制服务器地址", systemImage: "doc.on.doc")
@@ -403,7 +622,7 @@ struct SettingsView: View {
             confirmTitle: "切换用户",
             isDestructive: false
         ) {
-            appState.logout()
+            Task { await appState.logout() }
         }
     }
 
@@ -414,7 +633,7 @@ struct SettingsView: View {
             confirmTitle: "退出登录",
             isDestructive: true
         ) {
-            appState.logout()
+            Task { await appState.logout() }
         }
     }
 
@@ -737,6 +956,35 @@ private struct SettingsSlider: View {
                 .textStyle(.mono, color: Theme.textSecondary)
                 .frame(width: 48, alignment: .leading)
         }
+    }
+}
+
+// MARK: - 听歌记录凭据输入（复用 `TokenField` 外框：高 32，玻璃 / 纸墨双风格）
+
+/// 只读草稿 + 保存按钮的最小输入行：已保存的 Secret 永远不会回显到界面。
+private struct ScrobbleField: View {
+    let placeholder: String
+    @Binding var text: String
+    var isSecure = false
+    let accessibilityLabel: String
+
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TokenField(isFocused: focused) {
+            Group {
+                if isSecure {
+                    SecureField(placeholder, text: $text)
+                } else {
+                    TextField(placeholder, text: $text)
+                }
+            }
+            .textFieldStyle(.plain)
+            .textStyle(.bodySM, color: Theme.textPrimary)
+            .focused($focused)
+            .accessibilityLabel(accessibilityLabel)
+        }
+        .frame(width: 150)
     }
 }
 

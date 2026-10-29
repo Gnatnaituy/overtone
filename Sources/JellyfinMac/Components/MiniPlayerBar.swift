@@ -52,10 +52,10 @@ struct MiniPlayerBar: View {
 
     // MARK: - 左区：封面 + 曲目信息
 
-    private func trackInfo(_ track: BaseItemDto, showsFullOnAir: Bool) -> some View {
+    private func trackInfo(_ track: MediaItem, showsFullOnAir: Bool) -> some View {
         Button(action: onOpen) {
             HStack(spacing: Theme.Spacing.lg) {
-                RemoteImage(url: track.artworkURL(width: 96), contentMode: .fill)
+                RemoteImage(ref: track.artworkRef(width: 96), contentMode: .fill)
                     .frame(width: Theme.isPaper ? 44 : Theme.Size.playerCover,
                            height: Theme.isPaper ? 44 : Theme.Size.playerCover)
                     // 全部封面统一圆角 R=10（§7.2 规则 2）；paper 改 2pt 印刷套封（§4.6）
@@ -65,7 +65,7 @@ struct MiniPlayerBar: View {
                     .transition(.scale(scale: 0.7).combined(with: .opacity))
 
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(track.name ?? "未知曲目")
+                    Text(track.title)
                         .textStyle(.bodySM, weight: .medium, color: Theme.textPrimary)
                         .lineLimit(1)
                     HStack(spacing: Theme.Spacing.sm) {
@@ -73,7 +73,7 @@ struct MiniPlayerBar: View {
                         if music.isPlaying {
                             EqualizerBars(active: true, color: Theme.overtoneTeal, barWidth: 2, height: 10)
                         }
-                        Text([track.album, track.albumArtist].compactMap { $0 }.joined(separator: " · "))
+                        Text([track.albumTitle, track.artistName].compactMap { $0 }.joined(separator: " · "))
                             .textStyle(.caption, color: Theme.textSecondary)
                             .lineLimit(1)
                     }
@@ -94,7 +94,7 @@ struct MiniPlayerBar: View {
         .acceptClickThrough()
         .help("打开正在播放")
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("正在播放 \(track.name ?? "")，\(track.albumArtist ?? "")")
+        .accessibilityLabel("正在播放 \(track.title)，\(track.artistName ?? "")")
         .accessibilityHint("打开正在播放页")
     }
 

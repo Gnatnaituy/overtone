@@ -13,9 +13,11 @@ enum ContentPage: Equatable {
     case favorites
     case recentlyPlayed
     case mostPlayed
+    /// 听歌统计（sink 页）：只从首页入口进入，不占一级导航
+    case stats
     // 二级详情
-    case artist(BaseItemDto)
-    case album(BaseItemDto)
+    case artist(MediaItem)
+    case album(MediaItem)
     case playlist(Playlist)
 
     /// ⌘1…⌘5 对应的一级页
@@ -39,7 +41,7 @@ enum ContentPage: Equatable {
         switch self {
         case .artist, .album: return .library
         case .playlist: return .playlists
-        case .favorites, .recentlyPlayed, .mostPlayed: return .home
+        case .favorites, .recentlyPlayed, .mostPlayed, .stats: return .home
         default: return self
         }
     }
@@ -115,7 +117,7 @@ struct MainView: View {
     @State private var stack: [ContentPage] = []
     @State private var librarySegment: LibrarySegment = .albums
     @State private var libraryViewMode: LibraryViewMode = .grid
-    @State private var sortMode: TrackSortMode = .name
+    @State private var sortMode: MediaSort = .name
     @State private var showQueue = false
     /// 图标栏临时展开的 240pt 抽屉（W1）
     @State private var drawerOpen = false
@@ -251,7 +253,7 @@ struct MainView: View {
                     selected: currentPage,
                     highlightRoot: sidebarHighlightRoot,
                     userName: appState.user?.name ?? "",
-                    serverHost: APIClient.shared.baseURL?.host ?? "",
+                    serverHost: appState.backend.session?.serverURL.host ?? "",
                     onSelect: handleSidebarSelect,
                     onCollapse: nil,
                     onExpand: {
@@ -270,7 +272,7 @@ struct MainView: View {
                     selected: currentPage,
                     highlightRoot: sidebarHighlightRoot,
                     userName: appState.user?.name ?? "",
-                    serverHost: APIClient.shared.baseURL?.host ?? "",
+                    serverHost: appState.backend.session?.serverURL.host ?? "",
                     onSelect: handleSidebarSelect,
                     onCollapse: { railOverride = true },
                     onExpand: nil,
@@ -317,7 +319,7 @@ struct MainView: View {
                     selected: currentPage,
                     highlightRoot: sidebarHighlightRoot,
                     userName: appState.user?.name ?? "",
-                    serverHost: APIClient.shared.baseURL?.host ?? "",
+                    serverHost: appState.backend.session?.serverURL.host ?? "",
                     onSelect: { page in
                         drawerOpen = false
                         handleSidebarSelect(page)
@@ -400,6 +402,7 @@ struct MainView: View {
         case .favorites: return "favorites"
         case .recentlyPlayed: return "recentlyPlayed"
         case .mostPlayed: return "mostPlayed"
+        case .stats: return "stats"
         case .artist(let artist): return "artist-\(artist.id)"
         case .album(let album): return "album-\(album.id)"
         case .playlist(let playlist): return "playlist-\(playlist.id.uuidString)"
@@ -471,6 +474,7 @@ struct MainView: View {
                 onOpenRecentlyPlayed: { openFromHome(.recentlyPlayed) },
                 onOpenMostPlayed: { openFromHome(.mostPlayed) },
                 onOpenNowPlaying: { selectPage(.nowPlaying) },
+                onOpenStats: { openFromHome(.stats) },
                 searchQuery: $searchQuery,
                 searchFocusRequest: searchFocus,
                 onSearchSubmit: { selectPage(.search) }
@@ -549,6 +553,12 @@ struct MainView: View {
                 searchFocusRequest: searchFocus,
                 onSearchSubmit: { selectPage(.search) }
             )
+        case .stats:
+            StatsView(
+                sizeClass: sizeClass,
+                parentTitle: "首页",
+                onBack: pop
+            )
         case .artist(let artist):
             MusicArtistView(
                 artist: artist,
@@ -587,6 +597,7 @@ struct MainView: View {
         case .favorites: return "收藏"
         case .recentlyPlayed: return "最近播放"
         case .mostPlayed: return "最常播放"
+        case .stats: return "听歌统计"
         case .artist: return "艺人"
         case .album: return "专辑"
         case .playlist: return "播放列表"
@@ -674,9 +685,9 @@ struct MainView: View {
     // MARK: - 启动装载
 
     private func bootstrap() async {
-        // 等待会话就绪（自动登录进行中时 APIClient 尚未配置）
+        // 等待会话就绪（自动登录进行中时活动后端还没有 session / 用户）
         for _ in 0..<100 {
-            if APIClient.shared.baseURL != nil, APIClient.shared.user != nil { break }
+            if appState.user != nil { break }
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
         await appState.loadLibraries()
@@ -688,9 +699,9 @@ struct MainView: View {
             try? await Task.sleep(nanoseconds: UInt64(attempt) * 600_000_000)
             await appState.loadLibraries()
         }
-        if let lib = appState.libraries.first(where: { $0.collectionType == "music" })
-            ?? appState.libraries.first {
-            MusicDataStore.shared.libraryId = lib.id
+        // `AppState.libraries` 已经只含音乐库（过滤在各自后端里做），直接取第一个
+        if let lib = appState.libraries.first {
+            MusicDataStore.shared.libraryID = lib.id
             await MusicDataStore.shared.loadIfNeeded()
         }
         // 登录后自动与服务器播放列表同步

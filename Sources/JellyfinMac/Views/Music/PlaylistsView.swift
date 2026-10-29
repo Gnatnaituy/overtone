@@ -245,7 +245,7 @@ private struct PlaylistRow: View {
     private struct Stats {
         var count: Int
         var duration: Double
-        var coverTracks: [BaseItemDto]
+        var coverTracks: [MediaItem]
     }
 
     var body: some View {
@@ -461,7 +461,7 @@ private struct PlaylistRow: View {
     }
 
     private func recompute() {
-        let tracks: [BaseItemDto]
+        let tracks: [MediaItem]
         if playlist.isSmart {
             tracks = store.smartTracks(keyword: playlist.smartRule?.artistKeyword ?? "")
         } else {
@@ -469,7 +469,7 @@ private struct PlaylistRow: View {
         }
         stats = Stats(
             count: tracks.count,
-            duration: tracks.reduce(0) { $0 + $1.runtimeSeconds },
+            duration: tracks.reduce(0) { $0 + $1.duration },
             coverTracks: Array(tracks.prefix(4))
         )
     }
@@ -533,7 +533,7 @@ struct PlaylistGrid: View {
                         LibraryListRow(
                             title: playlist.name,
                             subtitle: playlist.isSmart ? "智能播放列表" : "\(playlist.trackIds.count) 首曲目",
-                            artworkURL: nil,
+                            artwork: nil,
                             isCurrent: false,
                             isPlaying: false,
                             metrics: metrics,

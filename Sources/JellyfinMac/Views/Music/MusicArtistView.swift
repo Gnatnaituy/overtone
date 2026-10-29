@@ -2,20 +2,23 @@ import SwiftUI
 
 /// 艺人详情页（重做，§4.4）：复用专辑详情骨架——圆形封面 + 热门曲目 + 专辑网格。
 struct MusicArtistView: View {
-    let artist: BaseItemDto
+    let artist: MediaItem
     let sizeClass: LayoutSizeClass
     let parentTitle: String
-    let onOpenAlbum: (BaseItemDto) -> Void
+    let onOpenAlbum: (MediaItem) -> Void
     let onBack: () -> Void
 
-    @StateObject private var vm: MusicArtistViewModel
+    /// 艺人名下的专辑与曲目（由 `MusicDataStore` 取，后端不支持艺人浏览时用已加载曲库兜底）
+    @State private var albums: [MediaItem] = []
+    @State private var tracks: [MediaItem] = []
+    @State private var isLoading = false
     @State private var appeared = false
 
     init(
-        artist: BaseItemDto,
+        artist: MediaItem,
         sizeClass: LayoutSizeClass,
         parentTitle: String,
-        onOpenAlbum: @escaping (BaseItemDto) -> Void,
+        onOpenAlbum: @escaping (MediaItem) -> Void,
         onBack: @escaping () -> Void
     ) {
         self.artist = artist
@@ -23,7 +26,6 @@ struct MusicArtistView: View {
         self.parentTitle = parentTitle
         self.onOpenAlbum = onOpenAlbum
         self.onBack = onBack
-        _vm = StateObject(wrappedValue: MusicArtistViewModel(artistId: artist.id))
     }
 
     var body: some View {
@@ -32,7 +34,7 @@ struct MusicArtistView: View {
                 sizeClass: sizeClass,
                 parentTitle: parentTitle,
                 onParent: onBack,
-                title: artist.name ?? "艺人"
+                title: artist.title
             )
 
             ScrollView {
@@ -43,12 +45,12 @@ struct MusicArtistView: View {
                         .padding(.bottom, Theme.Spacing.xxl)
 
                     VStack(alignment: .leading, spacing: Theme.Spacing.section) {
-                        if vm.isLoading && vm.albums.isEmpty && vm.tracks.isEmpty {
+                        if isLoading && albums.isEmpty && tracks.isEmpty {
                             SkeletonGrid(count: 6, minWidth: sizeClass.gridMin, spacing: sizeClass.gridSpacing)
                         } else {
-                            if !vm.albums.isEmpty { albumsSection }
-                            if !vm.tracks.isEmpty { topTracksSection }
-                            if vm.albums.isEmpty && vm.tracks.isEmpty { emptyState }
+                            if !albums.isEmpty { albumsSection }
+                            if !tracks.isEmpty { topTracksSection }
+                            if albums.isEmpty && tracks.isEmpty { emptyState }
                         }
                     }
                     .padding(.horizontal, sizeClass.pageMargin)
@@ -64,7 +66,7 @@ struct MusicArtistView: View {
             .pageBodyWidthClamp()
         }
         .task {
-            await vm.load()
+            await load()
             appeared = true
         }
     }
@@ -74,10 +76,7 @@ struct MusicArtistView: View {
     @ViewBuilder
     private var header: some View {
         let coverSize = sizeClass.detailCoverSize
-        let cover = RemoteImage(
-            url: APIClient.shared.primaryImageURL(for: artist, width: 480),
-            contentMode: .fill
-        )
+        let cover = RemoteImage(ref: artist.artworkRef(width: 480), contentMode: .fill)
         .frame(width: coverSize, height: coverSize)
         .clipShape(Circle())
         .modifier(ArtistCoverChrome(coverSize: coverSize))
@@ -99,7 +98,7 @@ struct MusicArtistView: View {
         VStack(alignment: .leading, spacing: Theme.Spacing.md) {
             Eyebrow(text: "艺人")
 
-            Text(artist.name ?? "")
+            Text(artist.title)
                 .textStyle(.title1, color: Theme.textPrimary)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -112,22 +111,22 @@ struct MusicArtistView: View {
 
             HStack(spacing: Theme.Spacing.lg) {
                 Button {
-                    MusicPlayerModel.shared.play(tracks: vm.tracks, startAt: 0)
+                    MusicPlayerModel.shared.play(tracks: tracks, startAt: 0)
                 } label: {
                     Label("播放", systemImage: "play.fill")
                         .frame(minWidth: 88)
                 }
                 .buttonStyle(PrimaryButtonStyle())
-                .disabled(vm.tracks.isEmpty)
+                .disabled(tracks.isEmpty)
 
                 Button {
-                    MusicPlayerModel.shared.play(tracks: vm.tracks.shuffled(), startAt: 0)
+                    MusicPlayerModel.shared.play(tracks: tracks.shuffled(), startAt: 0)
                 } label: {
                     Label("随机播放", systemImage: "shuffle")
                         .frame(minWidth: 76)
                 }
                 .buttonStyle(SecondaryButtonStyle())
-                .disabled(vm.tracks.isEmpty)
+                .disabled(tracks.isEmpty)
             }
             .padding(.top, Theme.Spacing.xs)
         }
@@ -135,17 +134,30 @@ struct MusicArtistView: View {
     }
 
     /// 元信息行：专辑数 · 曲目数
+    ///
+    /// 领域模型没有「艺人名下专辑总数」字段（原来的 `childCount` 是 Jellyfin 的 ChildCount），
+    /// 这里用**已取到的专辑数**代替：数据来自 `artistAlbums(artistID:)`，语义上等价。
     private var metaLine: String {
         var parts: [String] = []
-        if let count = artist.childCount, count > 0 {
-            parts.append("\(count) 张专辑")
-        } else if !vm.albums.isEmpty {
-            parts.append("\(vm.albums.count) 张专辑")
+        if !albums.isEmpty {
+            parts.append("\(albums.count) 张专辑")
         }
-        if !vm.tracks.isEmpty {
-            parts.append("\(vm.tracks.count) 首曲目")
+        if !tracks.isEmpty {
+            parts.append("\(tracks.count) 首曲目")
         }
         return parts.joined(separator: " · ")
+    }
+
+    private func load() async {
+        guard !isLoading else { return }
+        isLoading = true
+        defer { isLoading = false }
+        // 两个请求互不依赖（都以 artistID 为条件，谁也不等谁的结果）：
+        // 并发发出后页面等待从 RTT1+RTT2 降到 max(RTT1,RTT2)。
+        async let albumList: [MediaItem] = MusicDataStore.shared.artistAlbums(artistID: artist.id)
+        async let trackList: [MediaItem] = MusicDataStore.shared.artistTracks(artistID: artist.id)
+        albums = await albumList
+        tracks = await trackList
     }
 
     // MARK: - 专辑网格
@@ -159,7 +171,7 @@ struct MusicArtistView: View {
                 alignment: .leading,
                 spacing: sizeClass.gridSpacing.v
             ) {
-                ForEach(Array(vm.albums.enumerated()), id: \.element.id) { index, album in
+                ForEach(Array(albums.enumerated()), id: \.element.id) { index, album in
                     PosterCard(item: album, width: 320, onTap: { onOpenAlbum(album) })
                         .staggerAppear(index: index, visible: appeared)
                 }
@@ -173,11 +185,11 @@ struct MusicArtistView: View {
         VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
             SectionHeader(title: "热门曲目")
             TrackTable(
-                tracks: Array(vm.tracks.prefix(10)),
+                tracks: Array(tracks.prefix(10)),
                 sizeClass: sizeClass,
                 showHeader: false,
                 onTap: { index in
-                    MusicPlayerModel.shared.play(tracks: vm.tracks, startAt: index)
+                    MusicPlayerModel.shared.play(tracks: tracks, startAt: index)
                 }
             )
         }

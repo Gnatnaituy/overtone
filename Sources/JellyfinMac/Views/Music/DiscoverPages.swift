@@ -10,7 +10,7 @@ import SwiftUI
 struct TrackListPage: View {
     let sizeClass: LayoutSizeClass
     let title: String
-    let tracks: [BaseItemDto]
+    let tracks: [MediaItem]
     var emptyIcon = "music.note"
     var emptyText = "这里还什么都没有"
     var emptyHint: String?
@@ -73,7 +73,7 @@ struct TrackListPage: View {
                     } else {
                         LazyVStack(spacing: 0) {
                             // indices + 下标：`Array(tracks.enumerated())` 每次渲染都要物化
-                            // 一份 (offset, BaseItemDto) 元组数组（收藏/最近/最常可能是整库，
+                            // 一份 (offset, MediaItem) 元组数组（收藏/最近/最常可能是整库，
                             // 单次约 1ms）。本表只渲染，位置即身份。
                             ForEach(tracks.indices, id: \.self) { index in
                                 MusicRow(

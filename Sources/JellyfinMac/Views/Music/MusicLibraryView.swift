@@ -5,10 +5,10 @@ struct MusicLibraryView: View {
     let sizeClass: LayoutSizeClass
     @Binding var segment: LibrarySegment
     @Binding var viewMode: LibraryViewMode
-    let sortMode: TrackSortMode
-    let onSortModeChange: (TrackSortMode) -> Void
-    let onOpenArtist: (BaseItemDto) -> Void
-    let onOpenAlbum: (BaseItemDto) -> Void
+    let sortMode: MediaSort
+    let onSortModeChange: (MediaSort) -> Void
+    let onOpenArtist: (MediaItem) -> Void
+    let onOpenAlbum: (MediaItem) -> Void
     let onOpenPlaylist: (Playlist) -> Void
     @Binding var searchQuery: String
     let searchFocusRequest: Int
@@ -17,7 +17,9 @@ struct MusicLibraryView: View {
     @ObservedObject private var store = MusicDataStore.shared
     @ObservedObject private var music = MusicPlayerModel.shared
     /// 排序结果缓存：滚动时不重复排序 1000+ 曲目
-    @State private var displayedTracks: [BaseItemDto] = []
+    @State private var displayedTracks: [MediaItem] = []
+    /// 专辑 id → 曲目数（`MediaItem` 没有 ChildCount，用已加载曲库现算一次并缓存）
+    @State private var albumTrackCounts: [String: Int] = [:]
     @State private var appeared = false
     /// 已挂载过的分段：切回不再重建。
     /// 曲库「歌曲」分段一次要把可见的十几行实装出来，实测 0.27s 主线程 CPU / 次。
@@ -43,6 +45,7 @@ struct MusicLibraryView: View {
         VStack(spacing: 0) {
             topBar
             segmentBar
+            loadStatusBanner
             // 每个分段一个常驻滚动体：切换只改可见性（已实现的行、滚动位置都保留）
             ZStack {
                 ForEach(renderedSegments, id: \.self) { current in
@@ -64,14 +67,25 @@ struct MusicLibraryView: View {
         .task {
             // 启动页直接落在资料库时，等库 ID 解析完再拉取，避免页面空着
             await store.ensureLoaded()
-            displayedTracks = store.sortedTracks(by: sortMode)
+            refreshDerived()
         }
         .task(id: sortMode) {
-            displayedTracks = store.sortedTracks(by: sortMode)
+            refreshDerived()
         }
         .onChange(of: store.dataRevision) { _ in
-            displayedTracks = store.sortedTracks(by: sortMode)
+            refreshDerived()
         }
+    }
+
+    /// 重算两个派生缓存：排序结果（列表视图用）与专辑曲目数（列表模式右列用）
+    private func refreshDerived() {
+        displayedTracks = store.sortedTracks(by: sortMode)
+        var counts: [String: Int] = [:]
+        for track in store.tracks {
+            guard let albumID = track.albumID else { continue }
+            counts[albumID, default: 0] += 1
+        }
+        albumTrackCounts = counts
     }
 
     /// 单个分段的滚动体（原来只有一个滚动体，包着会随分段切换整体重建的内容）
@@ -100,15 +114,55 @@ struct MusicLibraryView: View {
             HStack(spacing: Theme.Spacing.md) {
                 if segment == .tracks {
                     SortMenu(
-                        current: sortMode.rawValue,
-                        options: TrackSortMode.allCases.map(\.rawValue),
-                        onSelect: { onSortModeChange(TrackSortMode(rawValue: $0) ?? .name) }
+                        current: sortMode.displayName,
+                        options: MediaSort.allCases.map(\.displayName),
+                        onSelect: { picked in
+                            // 菜单项按展示名匹配回枚举（`SortMenu` 只认字符串）
+                            onSortModeChange(
+                                MediaSort.allCases.first { $0.displayName == picked } ?? .name
+                            )
+                        }
                     )
                 }
                 if segment == .albums || segment == .artists || segment == .playlists {
                     ViewModeToggle(mode: $viewMode)
                 }
             }
+        }
+    }
+
+    // MARK: - 曲库加载状态（`MusicDataStore` 的两个只读状态）
+
+    /// 拉取失败 / 被上限截断时的内联提示：
+    /// - `loadError`：整库没取到（服务器未授权音乐目录、或网络错误）
+    /// - `isTruncated`：曲库超出单次加载上限，只装了前 N 首
+    @ViewBuilder
+    private var loadStatusBanner: some View {
+        if let error = store.loadError {
+            InlineBanner(
+                kind: .error,
+                message: error,
+                actionTitle: "重试",
+                onAction: { Task { await store.reload() } }
+            )
+            .padding(.horizontal, sizeClass.pageMargin)
+            .padding(.top, Theme.Spacing.lg)
+        } else if store.isTruncated {
+            InlineBanner(
+                kind: .warning,
+                message: "曲库超出单次加载上限，当前只加载了前 \(store.tracks.count) 首"
+            )
+            .padding(.horizontal, sizeClass.pageMargin)
+            .padding(.top, Theme.Spacing.lg)
+        } else if store.isPartialFailure {
+            InlineBanner(
+                kind: .warning,
+                message: "部分内容加载失败，列表可能不完整",
+                actionTitle: "重试",
+                onAction: { Task { await store.reload() } }
+            )
+            .padding(.horizontal, sizeClass.pageMargin)
+            .padding(.top, Theme.Spacing.lg)
         }
     }
 
@@ -140,7 +194,7 @@ struct MusicLibraryView: View {
     }
 
     /// 「播放全部 / 随机」的作用范围：歌曲页用当前排序结果，其余分段用整库曲目
-    private var playAllSource: [BaseItemDto] {
+    private var playAllSource: [MediaItem] {
         switch segment {
         case .tracks: return displayedTracks
         case .playlists: return []
@@ -227,14 +281,14 @@ struct MusicLibraryView: View {
             ForEach(store.albums.indices, id: \.self) { index in
                 let album = store.albums[index]
                 LibraryListRow(
-                    title: album.name ?? "",
-                    subtitle: [album.albumArtist, album.productionYear.map(String.init)]
+                    title: album.title,
+                    subtitle: [album.artistName, album.year.map(String.init)]
                         .compactMap { $0 }.joined(separator: " · "),
-                    artworkURL: album.artworkURL(width: 96),
+                    artwork: album.artworkRef(width: 96),
                     isCurrent: false,
                     isPlaying: false,
                     metrics: metrics,
-                    trailingText: album.childCount.map { "\($0) 首" },
+                    trailingText: albumTrackCounts[album.id].map { "\($0) 首" },
                     onTap: { onOpenAlbum(album) }
                 )
                 if index < store.albums.count - 1 {
@@ -349,7 +403,7 @@ struct MusicLibraryView: View {
 struct LibraryListRow: View {
     let title: String
     let subtitle: String
-    let artworkURL: URL?
+    let artwork: ArtworkRef?
     var isCircular = false
     var isCurrent = false
     var isPlaying = false
@@ -364,8 +418,8 @@ struct LibraryListRow: View {
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: Theme.Spacing.lg) {
-                if let artworkURL {
-                    RemoteImage(url: artworkURL, contentMode: .fill)
+                if let artwork {
+                    RemoteImage(ref: artwork, contentMode: .fill)
                         .frame(width: 40, height: 40)
                         .modifier(LibraryRowCover(isCircular: isCircular))
                 }

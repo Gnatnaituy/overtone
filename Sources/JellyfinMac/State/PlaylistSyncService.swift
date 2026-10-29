@@ -1,15 +1,12 @@
 import SwiftUI
 
-/// 创建/更新播放列表请求体（Jellyfin 反序列化大小写不敏感，camelCase 可接受）
-private struct PlaylistUpdateRequest: Codable {
-    let name: String
-    let ids: [String]
-    let mediaType: String = "Audio"
-}
-
-/// Jellyfin 服务器播放列表双向同步：
-/// - syncAll：以服务器为权威，拉取服务器播放列表合并到本地；本地未同步的列表上传创建
-/// - 单项推送：创建/删除/重命名/添加/移除实时同步到服务器
+/// 服务器播放列表双向同步（后端无关）。
+///
+/// - `syncAll`：以服务器为权威，拉取服务器播放列表合并到本地；本地未同步的列表上传创建
+/// - 单项推送：创建 / 删除 / 重命名 / 添加 / 移除实时同步
+///
+/// 后端没有播放列表能力时（`capabilities.remotePlaylists == false`）整个服务静默降级为
+/// 「纯本地播放列表」，UI 用 `isAvailable` 决定是否展示同步入口。
 @MainActor
 final class PlaylistSyncService: ObservableObject {
     static let shared = PlaylistSyncService()
@@ -19,73 +16,64 @@ final class PlaylistSyncService: ObservableObject {
     @Published var lastSyncTime: Date?
 
     private var store: PlaylistStore { .shared }
+    private var backend: MusicBackend { BackendRegistry.shared.active }
+
+    /// 当前后端是否支持服务器播放列表
+    var isAvailable: Bool { backend.capabilities.remotePlaylists }
 
     // MARK: - 全量同步
 
     func syncAll() async {
-        guard !isSyncing else { return }
+        guard isAvailable, !isSyncing else { return }
         isSyncing = true
         defer { isSyncing = false }
-        print("[Sync] start, smart=\(store.smartPlaylists.count), playlists=\(store.playlists.count)")
         do {
-            let userId = try requireUserId()
+            let remote = try await backend.remotePlaylists()
 
-            // 1. 拉取服务器全部播放列表
-            let result: QueryResult<BaseItemDto> = try await APIClient.shared.get(
-                "/Users/\(userId)/Items",
-                query: [
-                    URLQueryItem(name: "IncludeItemTypes", value: "Playlist"),
-                    URLQueryItem(name: "Recursive", value: "true"),
-                ]
-            )
-
-            // 2. 服务器 → 本地（合并/导入，服务器为权威；智能列表镜像副本除外）
-            // 先建一次 serverId → 本地列表 索引：循环里每次读 `store.allPlaylists`
-            // 都要重新拼一遍数组（O(K)），整体是 O(K²)
-            var localByServerId: [String: Playlist] = [:]
+            // 服务器 → 本地：先建 serverId → 本地列表 索引，避免循环里 O(K²)
+            var localByServerID: [String: Playlist] = [:]
             for local in store.allPlaylists {
-                if let sid = local.serverId { localByServerId[sid] = local }
+                if let sid = local.serverId { localByServerID[sid] = local }
             }
-            for item in result.items ?? [] {
-                let items = try await fetchItems(playlistId: item.id, userId: userId)
-                let trackIds = items.map { $0.id }
-                let itemMap = Dictionary(uniqueKeysWithValues: items.compactMap { track in
-                    track.playlistItemId.map { (track.id, $0) }
+            for playlist in remote {
+                let entries = try await backend.remotePlaylistEntries(id: playlist.id)
+                let trackIDs = entries.map { $0.track.id }
+                let itemMap = Dictionary(uniqueKeysWithValues: entries.compactMap { entry in
+                    entry.entryID.map { (entry.track.id, $0) }
                 })
-                if let local = localByServerId[item.id] {
+                if let local = localByServerID[playlist.id] {
                     // 智能列表的服务器副本：内容由本地动态生成，不反向覆盖
                     if local.isSmart { continue }
                     store.updateFromServer(
                         localId: local.id,
-                        name: item.name ?? local.name,
-                        trackIds: trackIds,
+                        name: playlist.name,
+                        trackIds: trackIDs,
                         itemMap: itemMap
                     )
                 } else {
                     store.importFromServer(
-                        serverId: item.id,
-                        name: item.name ?? "播放列表",
-                        trackIds: trackIds,
+                        serverId: playlist.id,
+                        name: playlist.name,
+                        trackIds: trackIDs,
                         itemMap: itemMap
                     )
                 }
             }
 
-            // 3. 本地未同步的普通列表 → 上传创建
-            for local in store.playlists where local.serverId == nil {
+            // 本地未同步的普通列表 → 上传创建
+            for local in store.playlists where local.serverId == nil && belongsToActiveBackend(local) {
                 try await pushCreate(local)
             }
 
-            // 4. 智能播放列表 → 镜像为服务器普通播放列表（匹配结果全量覆盖）
-            for smart in store.smartPlaylists {
-                print("[Sync] mirror smart: \(smart.name)")
+            // 智能播放列表 → 镜像为服务器普通播放列表
+            for smart in store.smartPlaylists where belongsToActiveBackend(smart) {
                 try await pushSmartMirror(smart)
             }
 
             lastError = nil
             lastSyncTime = Date()
         } catch {
-            lastError = error.localizedDescription
+            lastError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             print("[Sync] \(error)")
         }
     }
@@ -93,87 +81,64 @@ final class PlaylistSyncService: ObservableObject {
     // MARK: - 单项推送
 
     func pushCreate(_ playlist: Playlist) async throws {
-        let body = try JSONEncoder().encode(PlaylistUpdateRequest(name: playlist.name, ids: playlist.trackIds))
-        let created: BaseItemDto = try await APIClient.shared.post("/Playlists", body: body)
+        guard isAvailable else { return }
+        let created = try await backend.createRemotePlaylist(
+            name: playlist.name,
+            trackIDs: playlist.trackIds
+        )
         store.bindServerId(localId: playlist.id, serverId: created.id)
     }
 
     func pushRename(_ playlist: Playlist) async throws {
-        guard let serverId = playlist.serverId else { return }
-        var ids = playlist.trackIds
-        if playlist.isSmart {
-            // 智能列表的条目是动态匹配结果，重命名时保持镜像完整
-            ids = smartTrackIds(playlist)
-        }
-        let body = try JSONEncoder().encode(PlaylistUpdateRequest(name: playlist.name, ids: ids))
-        try await APIClient.shared.postEmpty("/Playlists/\(serverId)", body: body)
+        guard isAvailable, let serverId = playlist.serverId else { return }
+        let ids = playlist.isSmart ? smartTrackIDs(playlist) : playlist.trackIds
+        try await backend.updateRemotePlaylist(id: serverId, name: playlist.name, trackIDs: ids)
     }
 
     /// 智能播放列表镜像：匹配结果全量覆盖到服务器普通播放列表（不存在则创建）
     func pushSmartMirror(_ smart: Playlist) async throws {
-        let ids = smartTrackIds(smart)
+        guard isAvailable else { return }
+        let ids = smartTrackIDs(smart)
         if let serverId = smart.serverId {
-            let body = try JSONEncoder().encode(PlaylistUpdateRequest(name: smart.name, ids: ids))
-            try await APIClient.shared.postEmpty("/Playlists/\(serverId)", body: body)
+            try await backend.updateRemotePlaylist(id: serverId, name: smart.name, trackIDs: ids)
         } else {
-            let body = try JSONEncoder().encode(PlaylistUpdateRequest(name: smart.name, ids: ids))
-            let created: BaseItemDto = try await APIClient.shared.post("/Playlists", body: body)
+            let created = try await backend.createRemotePlaylist(name: smart.name, trackIDs: ids)
             store.bindServerId(localId: smart.id, serverId: created.id)
         }
     }
 
-    private func smartTrackIds(_ smart: Playlist) -> [String] {
-        MusicDataStore.shared.smartTracks(keyword: smart.smartRule?.artistKeyword ?? "").map { $0.id }
-    }
-
     func pushDelete(serverId: String) async throws {
-        // Jellyfin 10.10+ 播放列表删除走通用条目删除接口
-        try await APIClient.shared.deleteEmpty("/Items/\(serverId)")
+        guard isAvailable else { return }
+        try await backend.deleteRemotePlaylist(id: serverId)
     }
 
     func pushAdd(serverId: String, trackId: String) async throws {
-        let userId = try requireUserId()
-        try await APIClient.shared.postEmpty(
-            "/Playlists/\(serverId)/Items",
-            query: [
-                URLQueryItem(name: "Ids", value: trackId),
-                URLQueryItem(name: "UserId", value: userId),
-            ]
-        )
+        guard isAvailable else { return }
+        try await backend.addRemotePlaylistTracks(id: serverId, trackIDs: [trackId])
     }
 
-    /// 移除条目。`knownEntryId` 由调用方在清理本地映射**之前**取出 ——
-    /// 没有它就只能退化成拉取整个播放列表条目再查找（每次移除一次全量 GET）。
+    /// 移除条目。`knownEntryID` 由调用方在清理本地映射**之前**取出 ——
+    /// 没有它就要先拉整个播放列表条目再查找（每次移除一次全量 GET）。
+    /// 没有 entryId 概念的后端（飞牛）会把 trackId 当作条目标识传下去。
     func pushRemove(serverId: String, trackId: String, knownEntryId: String? = nil) async throws {
-        let userId = try requireUserId()
-        var entryId = knownEntryId
-        if entryId == nil {
-            entryId = try await fetchEntryId(playlistId: serverId, userId: userId, trackId: trackId)
+        guard isAvailable else { return }
+        var entryID = knownEntryId
+        if entryID == nil {
+            let entries = try await backend.remotePlaylistEntries(id: serverId)
+            entryID = entries.first { $0.track.id == trackId }?.entryID ?? trackId
         }
-        guard let entryId else { return }
-        try await APIClient.shared.deleteEmpty(
-            "/Playlists/\(serverId)/Items",
-            query: [URLQueryItem(name: "EntryIds", value: entryId)]
-        )
+        guard let entryID else { return }
+        try await backend.removeRemotePlaylistEntries(id: serverId, entryIDs: [entryID])
     }
 
     // MARK: - 内部
 
-    private func fetchItems(playlistId: String, userId: String) async throws -> [BaseItemDto] {
-        let result: QueryResult<BaseItemDto> = try await APIClient.shared.get(
-            "/Playlists/\(playlistId)/Items",
-            query: [URLQueryItem(name: "UserId", value: userId)]
-        )
-        return result.items ?? []
+    private func smartTrackIDs(_ smart: Playlist) -> [String] {
+        MusicDataStore.shared.smartTracks(keyword: smart.smartRule?.artistKeyword ?? "").map { $0.id }
     }
 
-    private func fetchEntryId(playlistId: String, userId: String, trackId: String) async throws -> String? {
-        let items = try await fetchItems(playlistId: playlistId, userId: userId)
-        return items.first { $0.id == trackId }?.playlistItemId
-    }
-
-    private func requireUserId() throws -> String {
-        guard let id = APIClient.shared.user?.id else { throw APIError.notConfigured }
-        return id
+    private func belongsToActiveBackend(_ playlist: Playlist) -> Bool {
+        guard let backend = playlist.backend else { return true }
+        return backend == BackendRegistry.shared.activeKind
     }
 }

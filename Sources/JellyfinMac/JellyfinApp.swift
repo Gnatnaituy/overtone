@@ -8,6 +8,11 @@ struct JellyfinApp: App {
     @ObservedObject private var settings = AppSettings.shared
 
     init() {
+        // 命令行诊断（都不启动界面）：
+        // `--selftest` 跑协议解析断言；`--fn-resolve <FN ID>` 解析 FN Connect 并打印候选探测结果
+        SelfTest.runIfRequested()
+        FnConnectDiagnostics.runIfRequested()
+        FeiniuSessionDiagnostics.runIfRequested()
         setvbuf(stdout, nil, _IONBF, 0)
         setvbuf(stderr, nil, _IONBF, 0)
         AppDelegate.disableWindowStateRestoration()
@@ -69,6 +74,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        // 听歌记录：结算上次异常退出遗留的会话 + 补报离线待提交队列（幂等）。
+        Task { @MainActor in
+            ScrobbleService.shared.bootstrap()
+        }
+
         // 窗口每次成为主窗口时应用定制（覆盖 SwiftUI 对按钮显示状态的重置）
         NotificationCenter.default.addObserver(
             forName: NSWindow.didBecomeKeyNotification,
@@ -122,6 +132,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return event
         }
+    }
+
+    /// 退出前把本地兜底数据（播放进度 / 播放次数 / 本地收藏）的 debounce 队列刷盘。
+    ///
+    /// `LocalLibraryState` 的写盘有 300ms 合并窗口，直接退出会丢掉最后一笔进度 ——
+    /// 而「续播位置」正是退出时最容易丢、用户最能感知的一类数据。
+    func applicationWillTerminate(_ notification: Notification) {
+        LocalLibraryState.shared.flushNowBlocking()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

@@ -17,8 +17,8 @@ struct PlaylistDetailView: View {
     @State private var showDeleteConfirm = false
     @State private var renameText = ""
     /// 曲目计算结果缓存：数据/规则变化时重算，避免每次渲染重复过滤
-    @State private var computedTracks: [BaseItemDto] = []
-    @State private var coverTracks: [BaseItemDto] = []
+    @State private var computedTracks: [MediaItem] = []
+    @State private var coverTracks: [MediaItem] = []
     @State private var appeared = false
 
     private var livePlaylist: Playlist? {

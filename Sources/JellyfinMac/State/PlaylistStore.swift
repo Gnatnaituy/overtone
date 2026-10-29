@@ -12,6 +12,8 @@ struct Playlist: Codable, Identifiable, Equatable {
     var createdAt: Date
     var isSmart: Bool
     var smartRule: SmartRule?
+    /// 所属后端（老数据为 nil，视为 Jellyfin；多后端时只与同后端同步）
+    var backend: BackendKind?
 
     struct SmartRule: Codable, Equatable {
         var artistKeyword: String
@@ -61,7 +63,8 @@ final class PlaylistStore: ObservableObject {
             itemMap: nil,
             createdAt: Date(),
             isSmart: false,
-            smartRule: nil
+            smartRule: nil,
+            backend: BackendRegistry.shared.activeKind
         )
         playlists.append(p)
         save()
@@ -80,7 +83,8 @@ final class PlaylistStore: ObservableObject {
             itemMap: nil,
             createdAt: Date(),
             isSmart: true,
-            smartRule: Playlist.SmartRule(artistKeyword: artistKeyword)
+            smartRule: Playlist.SmartRule(artistKeyword: artistKeyword),
+            backend: BackendRegistry.shared.activeKind
         )
         smartPlaylists.append(p)
         save()
@@ -118,12 +122,13 @@ final class PlaylistStore: ObservableObject {
             }
         }
         save()
-        if let updated = allPlaylists.first(where: { $0.id == playlist.id }), let serverId = updated.serverId {
+        // 只有已同步到服务器的列表才需要推送改名（`pushRename` 内部也会再判一次）
+        if let updated = allPlaylists.first(where: { $0.id == playlist.id }), updated.serverId != nil {
             Task { try? await PlaylistSyncService.shared.pushRename(updated) }
         }
     }
 
-    func add(track: BaseItemDto, to playlist: Playlist) {
+    func add(track: MediaItem, to playlist: Playlist) {
         guard !playlist.isSmart else { return }
         guard let i = playlists.firstIndex(where: { $0.id == playlist.id }) else { return }
         guard !playlists[i].trackIds.contains(track.id) else { return }
@@ -199,7 +204,8 @@ final class PlaylistStore: ObservableObject {
             itemMap: itemMap,
             createdAt: Date(),
             isSmart: false,
-            smartRule: nil
+            smartRule: nil,
+            backend: BackendRegistry.shared.activeKind
         )
         playlists.append(p)
         save()

@@ -13,12 +13,16 @@ struct LoginView: View {
     /// 切风格只重建呈现层，本视图的 @State（服务器地址 / 用户名 / 密码 / 高级选项）全部保留
     @Environment(\.appVisualStyle) private var appStyle
 
-    @State private var host = UserDefaults.standard.string(forKey: "serverHost") ?? ""
+    /// 登录目标后端（Jellyfin / 飞牛音乐）。切换时回填该后端上次用过的地址与账号。
+    @State private var backendKind: BackendKind = BackendRegistry.shared.activeKind
+    @State private var host = ""
     @State private var scheme = UserDefaults.standard.string(forKey: "serverScheme") ?? "http"
     @State private var port = UserDefaults.standard.string(forKey: "serverPort") ?? ""
     @State private var clientName = UserDefaults.standard.string(forKey: "clientName") ?? "Overtone"
-    @State private var username = UserDefaults.standard.string(forKey: "username") ?? ""
+    @State private var username = ""
     @State private var password = ""
+    /// 飞牛音乐的可选安全码（`x-access-code`）
+    @State private var accessCode = ""
     @State private var isConnecting = false
     @State private var errorMessage: String?
     /// 仅本地校验失败时点亮字段错误态（服务端 / 网络错误只走内联横幅）
@@ -67,6 +71,7 @@ struct LoginView: View {
                 .frame(height: Theme.Size.windowChromeHeight)
         }
         .onAppear {
+            prefillForBackend()
             withAnimation(Theme.Motion.base) { showContent = true }
             DispatchQueue.main.async {
                 if host.isEmpty { hostFocused = true } else { usernameFocused = true }
@@ -254,11 +259,16 @@ struct LoginView: View {
 
     private var formCard: some View {
         VStack(alignment: .leading, spacing: 0) {
+            backendSelector
+                .padding(.bottom, Theme.Spacing.lg)
+
             Text("连接服务器")
                 // §6.1：paper 右栏标题用 title3 衬线（字符映射由 Theme 的字形切换完成）
                 .textStyle(Theme.isPaper ? .title3 : .title4, color: Theme.textPrimary)
                 .accessibilityAddTraits(.isHeader)
-            Text("填写你的 Jellyfin 服务器地址与账号")
+            Text(backendKind == .feiniu
+                 ? "填写 FN ID 或飞牛 NAS 地址，以及飞牛音乐账号"
+                 : "填写你的 Jellyfin 服务器地址与账号")
                 .textStyle(.footnote, color: Theme.textSecondary)
                 .padding(.top, Theme.Spacing.xs)
                 .padding(.bottom, Theme.Spacing.xxl)
@@ -333,7 +343,7 @@ struct LoginView: View {
             HStack(spacing: Theme.Spacing.md) {
                 Image(systemName: "server.rack")
                     .textStyle(.bodySM, color: Theme.textTertiary)
-                TextField("服务器地址，如 192.168.1.10", text: $host)
+                TextField(backendKind.serverPlaceholder, text: $host)
                     .textFieldStyle(.plain)
                     .textStyle(.bodySM, color: Theme.textPrimary)
                     .focused($hostFocused)
@@ -407,6 +417,9 @@ struct LoginView: View {
 
     private var advancedSection: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
+            if backendKind == .feiniu {
+                accessCodeSection
+            }
             Button {
                 withAnimation(Theme.Motion.base) { showAdvanced.toggle() }
             } label: {
@@ -423,7 +436,7 @@ struct LoginView: View {
             .buttonStyle(.plain)
             .accessibilityLabel(showAdvanced ? "收起高级选项" : "展开高级选项")
 
-            if showAdvanced {
+            if showAdvanced && backendKind == .jellyfin {
                 VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
                     HStack(spacing: Theme.Spacing.lg) {
                         Text("协议")
@@ -469,10 +482,12 @@ struct LoginView: View {
 
     // MARK: - 动作
 
-    /// 由 协议 + 主机 + 端口 组装服务器地址（主机里已含 scheme 时以输入为准）
+    /// 由 协议 + 主机 + 端口 组装服务器地址（主机里已含 scheme 时以输入为准）。
+    /// 飞牛的基址形态由后端自己规范化（可能带 `/music` 前缀或 FN ID），这里原样传。
     private var composedServer: String {
         let trimmedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedHost.isEmpty else { return "" }
+        if backendKind == .feiniu { return trimmedHost }
         if trimmedHost.contains("://") { return trimmedHost }
 
         var value = "\(scheme)://\(trimmedHost)"
@@ -502,13 +517,94 @@ struct LoginView: View {
         isConnecting = true
         Task {
             do {
-                try await appState.login(server: server, username: username, password: password)
+                try await appState.signIn(
+                    server: server,
+                    username: username,
+                    password: password,
+                    backend: backendKind,
+                    accessCode: accessCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        ? nil
+                        : accessCode.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
             } catch {
-                errorMessage = error.localizedDescription
+                errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
                 shake()
             }
             isConnecting = false
         }
+    }
+
+    // MARK: - 后端选择与回填
+
+    /// 后端选择器（分段控件）——登录页顶部
+    private var backendSelector: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            Text("服务器类型")
+                .textStyle(.caption, color: Theme.textSecondary)
+            SegmentedControl(
+                segments: BackendKind.allCases.map { .init($0.rawValue, $0.displayName) },
+                selection: Binding(
+                    get: { backendKind.rawValue },
+                    set: { raw in
+                        guard let kind = BackendKind(rawValue: raw), kind != backendKind else { return }
+                        backendKind = kind
+                        errorMessage = nil
+                        showsFieldError = false
+                        prefillForBackend()
+                        // 该后端之前登录过（内存会话 / 已存会话 / 已存密码）就直接进去，
+                        // 不再让用户重输密码 —— 凭证本来就是按后端分别保存的。
+                        Task { await appState.activateFromLogin(kind) }
+                    }
+                )
+            )
+        }
+    }
+
+    /// 飞牛音乐的可选安全码（部分 NAS 开启了访问码）
+    private var accessCodeSection: some View {
+        HStack(spacing: Theme.Spacing.lg) {
+            Text("安全码")
+                .textStyle(.footnote, color: Theme.textSecondary)
+                .frame(width: 56, alignment: .leading)
+            TokenField {
+                SecureField("可选（NAS 未开启访问码则留空）", text: $accessCode)
+                    .textFieldStyle(.plain)
+                    .textStyle(.bodySM, color: Theme.textPrimary)
+                    .accessibilityLabel("安全码")
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    /// 按当前后端回填上次的服务器地址与账号（凭据按后端命名空间存放）。
+    /// 飞牛上次若是用 FN ID 连的，就回填 FN ID 而不是当时解析出来的中继地址 ——
+    /// 中继地址会变，FN ID 不会。
+    private func prefillForBackend() {
+        let persistence = SessionPersistence.shared
+        if backendKind == .feiniu, let fnID = persistence.loadSession(.feiniu)?.fnID {
+            host = fnID
+        } else if let lastServer = persistence.lastServerURL(backendKind) {
+            host = displayHost(from: lastServer)
+        } else if backendKind == .jellyfin,
+                  let legacy = UserDefaults.standard.string(forKey: "serverHost") {
+            host = legacy
+        } else {
+            host = ""
+        }
+        username = persistence.lastUsername(backendKind)
+            ?? (backendKind == .jellyfin ? UserDefaults.standard.string(forKey: "username") ?? "" : "")
+        password = ""
+        accessCode = persistence.accessCode(backendKind) ?? ""
+    }
+
+    /// 已存地址回填到输入框时去掉 scheme 前缀（界面里另有「协议」分段）
+    private func displayHost(from stored: String) -> String {
+        guard backendKind == .jellyfin else { return stored }
+        var value = stored
+        for prefix in ["http://", "https://"] where value.hasPrefix(prefix) {
+            value.removeFirst(prefix.count)
+        }
+        return value
     }
 
     /// 左右往复抖动 3 次

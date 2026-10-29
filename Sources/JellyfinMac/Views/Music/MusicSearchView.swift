@@ -11,8 +11,8 @@ struct MusicSearchView: View {
     @Binding var query: String
     /// ⌘F 一次性聚焦请求（消费后由顶栏搜索框自行处理）
     let focusRequest: Int
-    let onOpenAlbum: (BaseItemDto) -> Void
-    let onOpenArtist: (BaseItemDto) -> Void
+    let onOpenAlbum: (MediaItem) -> Void
+    let onOpenArtist: (MediaItem) -> Void
     let onOpenPlaylist: (Playlist) -> Void
 
     @StateObject private var vm = MusicSearchViewModel()
@@ -115,6 +115,12 @@ struct MusicSearchView: View {
             }
         } else {
             VStack(alignment: .leading, spacing: Theme.Spacing.section) {
+                if vm.isLocalFallback {
+                    InlineBanner(
+                        kind: .info,
+                        message: "当前服务器不提供搜索接口，结果来自已加载的曲库（可能不完整）"
+                    )
+                }
                 if shows(.tracks), !vm.tracks.isEmpty { trackSection }
                 if shows(.albums), !vm.albums.isEmpty { albumSection }
                 if shows(.artists), !vm.artists.isEmpty { artistSection }

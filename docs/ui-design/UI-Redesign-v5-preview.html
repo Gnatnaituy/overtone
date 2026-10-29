@@ -1,0 +1,1094 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light" data-accent="sun">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Overtone · UI v5 暖阳胶片</title>
+<style>
+/* ================= 设计令牌（对应 UI-Redesign-v5.md §3） ================= */
+:root[data-theme="light"]{
+  --base:#F1E7D6; --card:#FCF7EE; --sunken:#E7DAC3; --hover:#F5EBDA;
+  --ink:#241C14; --ink2:#5C5044; --ink3:#74674F; --fill:#241C14; --fill-fg:#FCF7EE;
+  --sun:#BE8420; --sun-deep:#96660F; --sun-ink:#8A5F0E; --sun-tint:rgba(190,132,32,.10);
+  --cine:#3A6A62; --cine-tint:rgba(58,106,98,.10);
+  --red:#A83A28; --red-tint:rgba(168,58,40,.10);
+  --glow:rgba(226,164,72,.19); --shadow-c:76,52,20;
+  --line:rgba(36,28,20,.14); --line2:rgba(36,28,20,.26);
+  --mast-bg:#241C14; --mast-fg:#F1E7D6; --mast-line:rgba(241,231,214,.22);
+  --stage-bg:#E4D8C2; --stage-dot:rgba(36,28,20,.07); --stage-bar:#FCF7EE;
+  --btn-bg:#96660F; --btn-fg:#FCF7EE;
+  --cov-frame:rgba(255,255,255,.20); --cov-outer:rgba(36,28,20,.14);
+  --sh1:0 1px 2px rgba(var(--shadow-c),.10);
+  --sh2:0 6px 18px -6px rgba(var(--shadow-c),.22),0 0 0 1px var(--glow);
+  --sh3:0 18px 44px -12px rgba(var(--shadow-c),.32),0 0 0 1px var(--glow);
+}
+:root[data-theme="dark"]{
+  --base:#16110C; --card:#211A13; --sunken:#110D09; --hover:#2A2118;
+  --ink:#F4EADA; --ink2:#B3A288; --ink3:#94876F; --fill:#F4EADA; --fill-fg:#211A13;
+  --sun:#E2A748; --sun-deep:#C08A2E; --sun-ink:#F2C57E; --sun-tint:rgba(226,167,72,.14);
+  --cine:#6EB2A6; --cine-tint:rgba(110,178,166,.14);
+  --red:#E2705A; --red-tint:rgba(226,112,90,.14);
+  --glow:rgba(242,176,84,.15); --shadow-c:0,0,0;
+  --line:rgba(244,234,218,.14); --line2:rgba(244,234,218,.26);
+  --mast-bg:#0F0B08; --mast-fg:#F4EADA; --mast-line:rgba(244,234,218,.22);
+  --stage-bg:#0B0906; --stage-dot:rgba(244,234,218,.05); --stage-bar:#211A13;
+  --btn-bg:#E2A748; --btn-fg:#2A1E0B;
+  --cov-frame:rgba(255,255,255,.16); --cov-outer:rgba(0,0,0,.4);
+  --sh1:0 0 0 1px rgba(244,234,218,.06);
+  --sh2:0 0 22px var(--glow);
+  --sh3:0 0 40px var(--glow);
+}
+/* 强调色：浅色用「深档实底 + 卡纸白字」，深色用「亮档实底 + 深墨字」（§4.1 对比度约束） */
+:root[data-theme="light"][data-accent="sunset"]{--sun:#C05A2A;--sun-deep:#9E4718;--sun-ink:#9A461A;--sun-tint:rgba(192,90,42,.10);--btn-bg:#9E4718;--btn-fg:#FCF7EE}
+:root[data-theme="light"][data-accent="cine"]{--sun:#2F6B62;--sun-deep:#245950;--sun-ink:#245750;--sun-tint:rgba(47,107,98,.10);--btn-bg:#245950;--btn-fg:#FCF7EE}
+:root[data-theme="light"][data-accent="dusk"]{--sun:#6A4C93;--sun-deep:#543A78;--sun-ink:#543A78;--sun-tint:rgba(106,76,147,.10);--btn-bg:#543A78;--btn-fg:#FCF7EE}
+:root[data-theme="dark"][data-accent="sunset"]{--sun:#EC8250;--sun-deep:#C9683C;--sun-ink:#F5A784;--sun-tint:rgba(236,130,80,.14);--btn-bg:#EC8250;--btn-fg:#2A1E0B}
+:root[data-theme="dark"][data-accent="cine"]{--sun:#6EB2A6;--sun-deep:#4E9187;--sun-ink:#8FC9BE;--sun-tint:rgba(110,178,166,.14);--btn-bg:#6EB2A6;--btn-fg:#2A1E0B}
+:root[data-theme="dark"][data-accent="dusk"]{--sun:#A98BD6;--sun-deep:#8A6BB4;--sun-ink:#BFA6E4;--sun-tint:rgba(169,139,214,.14);--btn-bg:#A98BD6;--btn-fg:#2A1E0B}
+
+:root{
+  --f-mast:"Didot","Bodoni 72","Playfair Display","Times New Roman","Songti SC","Noto Serif SC",serif;
+  --f-ui:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  --f-fig:"New York","Iowan Old Style",Georgia,"Songti SC",serif;
+  --r-xs:4px; --r-sm:8px; --r-md:10px; --r-lg:14px; --r-xl:18px; --r-cov:16px;
+  --mo:200ms cubic-bezier(.2,0,.2,1);
+  --mo-page:240ms cubic-bezier(.16,.84,.44,1);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{font-family:var(--f-ui);background:var(--stage-bg);color:var(--ink);overflow-x:hidden;
+  background-image:radial-gradient(circle,var(--stage-dot) 1px,transparent 1px);background-size:24px 24px;
+  transition:background var(--mo)}
+button{font-family:inherit;border:none;background:none;cursor:pointer;color:inherit}
+input,select{font-family:inherit}
+svg.ic{width:16px;height:16px;flex:none;display:block}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:var(--line2);border:3px solid transparent;background-clip:content-box;border-radius:8px}
+::-webkit-scrollbar-track{background:transparent}
+kbd{font-family:var(--f-ui);font-size:10px;border:1px solid var(--line2);border-radius:var(--r-xs);padding:1px 4px;color:var(--ink2)}
+
+/* ================= 排版角色（§2.2） ================= */
+.mast{font-family:var(--f-mast);font-weight:400;letter-spacing:-.01em}
+.fig{font-family:var(--f-fig);font-variant-numeric:tabular-nums}
+.old{font-family:var(--f-fig);font-variant-numeric:oldstyle-nums}
+.spec{font-size:10px;line-height:14px;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:var(--ink3)}
+.lbl{font-size:10px;line-height:14px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3)}
+
+/* ================= 演示台 ================= */
+.studio{min-height:100%;display:flex;flex-direction:column;align-items:center;padding:18px 24px 40px}
+.studio-bar{width:100%;max-width:1120px;display:flex;align-items:center;gap:14px;padding:10px 14px;margin-bottom:20px;
+  background:var(--stage-bar);border-radius:var(--r-lg);box-shadow:var(--sh1);flex-wrap:wrap}
+.studio-logo{width:34px;height:34px;border-radius:var(--r-sm);background:var(--mast-bg);color:var(--mast-fg);display:flex;align-items:center;justify-content:center;flex:none}
+.studio-logo svg{width:20px;height:12px}
+.studio-title{flex:1;min-width:230px}
+.studio-title b{font-size:15px;font-weight:400;font-family:var(--f-mast)}
+.studio-title span{display:block;font-size:12px;color:var(--ink2)}
+.studio-ctl{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.ctl-label{font-size:10px;font-weight:600;letter-spacing:.14em;color:var(--ink3);text-transform:uppercase}
+.seg{display:inline-flex;background:var(--sunken);border-radius:var(--r-md);padding:2px;gap:2px}
+.seg button{font-size:12px;font-weight:500;color:var(--ink2);padding:5px 11px;border-radius:var(--r-sm);transition:all var(--mo);white-space:nowrap}
+.seg button.on{background:var(--card);color:var(--ink);font-weight:600;box-shadow:var(--sh1)}
+.swatch{width:18px;height:18px;border-radius:var(--r-xs);border:1px solid var(--line2);padding:0;transition:box-shadow var(--mo)}
+.swatch.on{box-shadow:0 0 0 2px var(--stage-bar),0 0 0 3px var(--ink)}
+.stage{width:100%;display:flex;justify-content:center;align-items:flex-start}
+.mac-window{width:1040px;height:700px;flex:none;background:var(--base);border-radius:12px;overflow:hidden;
+  box-shadow:0 0 0 1px var(--line2),0 30px 70px -20px rgba(var(--shadow-c),.42);position:relative;display:flex;flex-direction:column;
+  transition:width var(--mo)}
+.mac-window.narrow{width:640px}
+.traffic{position:absolute;top:20px;left:20px;z-index:60;display:flex;gap:8px}
+.traffic i{width:12px;height:12px;border-radius:50%;display:block}
+.traffic i:nth-child(1){background:#FF5F57}.traffic i:nth-child(2){background:#FEBC2E}.traffic i:nth-child(3){background:#28C840}
+.win-body{display:flex;flex:1;min-height:0}
+.mac-window.login #sidebar,.mac-window.login #topbar,.mac-window.login #player{display:none}
+
+/* ================= 齿孔帧 Sprocket（§2.4） ================= */
+.spk{position:relative;width:38px;height:12px;flex:none;display:block}
+.spk::before,.spk::after{content:"";position:absolute;left:0;right:0;height:3.5px;border-radius:1px;
+  background-image:repeating-linear-gradient(90deg,var(--line2) 0 4px,transparent 4px 9px)}
+.spk::before{top:0}.spk::after{bottom:0}
+.spk.wide{width:52px}
+
+/* ================= 侧栏（§4.3） ================= */
+#sidebar{width:240px;flex:none;background:var(--base);display:flex;flex-direction:column;
+  padding:54px 12px 14px;transition:width var(--mo)}
+.sb-brand{display:flex;align-items:center;gap:10px;padding:2px 8px 16px;color:var(--ink)}
+.sb-brand b{font-size:11px;font-weight:600;letter-spacing:.3em}
+.nav-item{display:flex;align-items:center;gap:10px;height:40px;padding:0 10px;border-radius:var(--r-md);
+  font-size:14px;color:var(--ink2);width:100%;text-align:left;transition:background var(--mo),color var(--mo),box-shadow var(--mo)}
+.nav-item svg{width:15px;height:15px}
+.nav-item:hover{background:var(--hover);color:var(--ink)}
+.nav-item.active{background:var(--card);color:var(--ink);font-weight:500;box-shadow:var(--sh1)}
+.nav-group{font-size:10px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);padding:18px 10px 8px}
+.sb-foot{margin-top:auto;padding-top:12px}
+.mac-window.narrow #sidebar{width:64px;padding:54px 10px 14px}
+.mac-window.narrow #sidebar .lbl,.mac-window.narrow #sidebar .nav-group,.mac-window.narrow #sidebar .sb-brand b{display:none}
+.mac-window.narrow #sidebar .nav-item{justify-content:center;padding:0}
+.mac-window.narrow #sidebar .sb-brand{justify-content:center;padding:0 0 14px}
+.mac-window.narrow #sidebar .nav-item.active{box-shadow:inset 0 -3px 0 0 var(--sun),var(--sh1)}
+
+/* ================= 主列 / 顶栏 ================= */
+.main-col{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--base);position:relative}
+#topbar{height:64px;flex:none;display:flex;align-items:center;gap:16px;padding:0 28px;position:relative;z-index:5}
+#tb-left{flex:1;min-width:0}
+#tb-right{display:flex;align-items:center;gap:10px;flex:none}
+.tb-title{font-family:var(--f-mast);font-size:26px;line-height:1}
+.tb-extra{display:flex;align-items:center;gap:10px;margin-top:6px}
+.greet{display:flex;align-items:baseline;gap:8px}
+.greet span{font-size:13px;color:var(--ink2)}
+.greet b{font-family:var(--f-mast);font-size:20px;font-weight:400}
+.crumb{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink2)}
+.crumb b{color:var(--ink);font-weight:500}
+.crumb .sep{color:var(--ink3)}
+.cbtn{display:inline-flex;align-items:center;gap:4px;font-size:13px;color:var(--ink2);padding:5px 9px;border-radius:var(--r-sm);transition:background var(--mo)}
+.cbtn:hover{background:var(--hover);color:var(--ink)}
+.cbtn svg{width:13px;height:13px}
+.tb-search{display:flex;align-items:center;gap:8px;width:240px;height:36px;padding:0 12px;background:var(--card);
+  border-radius:var(--r-md);box-shadow:var(--sh1);transition:box-shadow var(--mo)}
+.tb-search:focus-within{box-shadow:0 0 0 2px var(--sun),0 0 0 5px var(--sun-tint)}
+.tb-search svg{width:14px;height:14px;color:var(--ink3);flex:none}
+.tb-search input{border:none;outline:none;background:none;font-size:13px;width:100%;color:var(--ink)}
+.tb-search input::placeholder{color:var(--ink3)}
+.acct{width:36px;height:36px;border-radius:var(--r-md);display:flex;align-items:center;justify-content:center;color:var(--ink2);
+  background:var(--card);box-shadow:var(--sh1);transition:box-shadow var(--mo)}
+.acct:hover{box-shadow:var(--sh2)}
+.acct svg{width:16px;height:16px}
+
+/* ================= 页面容器 ================= */
+#pages{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:0 28px 28px;position:relative}
+.page{display:none}
+.page.active{display:block;animation:develop var(--mo-page) cubic-bezier(.16,.84,.44,1)}
+@keyframes develop{from{opacity:0;transform:translateY(8px);filter:saturate(.82)}to{opacity:1;transform:none;filter:none}}
+.block{margin-top:72px}
+.block:first-child{margin-top:0}
+
+/* 刊头 Masthead（§2.4） */
+.masthead{padding:8px 0 0;position:relative}
+.masthead h1{font-family:var(--f-mast);font-size:44px;line-height:1.06;font-weight:400;letter-spacing:-.012em;margin-top:10px}
+.masthead .lede{font-family:var(--f-mast);font-style:italic;font-size:17px;color:var(--ink2);margin-top:10px}
+.masthead.compact h1{font-size:34px}
+
+/* 齿孔标签（§4.7） */
+.spk-label{display:flex;align-items:center;gap:12px;margin-bottom:20px}
+.spk-label .fill{flex:1;height:1px;background:var(--line)}
+.spk-label .count{font-family:var(--f-fig);font-size:12px;color:var(--ink3);font-variant-numeric:tabular-nums}
+.tx-btn{font-size:12px;font-weight:500;color:var(--ink2);transition:color var(--mo)}
+.tx-btn:hover{color:var(--ink);text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--sun)}
+
+/* ================= 按钮（§4.1） ================= */
+.btn{height:44px;padding:0 24px;border-radius:999px;font-size:14px;font-weight:500;display:inline-flex;align-items:center;
+  justify-content:center;gap:8px;transition:box-shadow var(--mo),background var(--mo)}
+.btn.primary{background:var(--btn-bg);color:var(--btn-fg);font-weight:600;box-shadow:var(--sh1)}
+.btn.primary:hover{box-shadow:var(--sh2)}
+.btn.ghost{background:var(--card);color:var(--ink);box-shadow:inset 0 0 0 1px var(--line2),var(--sh1)}
+.btn.ghost:hover{box-shadow:inset 0 0 0 1px var(--line2),var(--sh2)}
+.btn.full{width:100%}
+.btn.sm{height:32px;padding:0 16px;font-size:13px}
+.ic-btn{width:32px;height:32px;border-radius:var(--r-sm);display:inline-flex;align-items:center;justify-content:center;
+  color:var(--ink2);transition:background var(--mo),color var(--mo)}
+.ic-btn:hover{background:var(--card);color:var(--ink);box-shadow:var(--sh1)}
+.ic-btn svg{width:16px;height:16px}
+.ic-btn.sm{width:28px;height:28px}.ic-btn.sm svg{width:14px;height:14px}
+.rd-act{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:500;color:var(--ink2);
+  padding:5px 10px;border-radius:var(--r-sm);transition:background var(--mo),color var(--mo)}
+.rd-act:hover{background:var(--card);color:var(--ink);box-shadow:var(--sh1)}
+.rd-act svg{width:13px;height:13px}
+.play-fab{width:56px;height:56px;border-radius:50%;background:var(--fill);color:var(--fill-fg);
+  display:inline-flex;align-items:center;justify-content:center;box-shadow:var(--sh2);transition:box-shadow var(--mo),transform var(--mo)}
+.play-fab:hover{box-shadow:var(--sh3);transform:scale(1.02)}
+.play-fab svg{width:22px;height:22px}
+
+/* ================= 曝光刻度 EV Scale（§4.5） ================= */
+.ev-wrap{width:100%}
+.ev{position:relative;height:3px;border-radius:2px;background:var(--sunken);transition:height var(--mo)}
+.ev:hover{height:5px}
+.ev-fill{position:absolute;left:0;top:0;bottom:0;border-radius:2px;background:linear-gradient(90deg,var(--sun-deep),var(--sun));
+  width:0%;transition:width 160ms ease-out}
+.ev-knob{position:absolute;top:50%;left:0%;width:10px;height:10px;margin:-5px 0 0 -5px;border-radius:50%;
+  background:var(--sun);box-shadow:0 0 0 2px var(--card),0 0 10px var(--glow);transition:left 160ms ease-out}
+.ev-ticks{height:3px;margin-top:4px;background-image:repeating-linear-gradient(90deg,var(--line) 0 1px,transparent 1px 24px)}
+.ev.mini{height:2px}.ev.mini:hover{height:2px}
+.ev.mini .ev-knob{display:none}
+.ev.flat .ev-knob{display:none}
+
+/* ================= 封面（§4.6） ================= */
+.cv{position:relative;overflow:hidden;border-radius:var(--r-cov);flex:none;background:#8a7a63;
+  box-shadow:inset 0 0 0 1px var(--cov-frame),0 0 0 1px var(--cov-outer),var(--sh1);transition:box-shadow var(--mo),transform var(--mo)}
+.cv::after{content:"";position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(120% 90% at 18% 0%,rgba(255,236,200,.30),transparent 62%)}
+.cv.s40{width:40px;height:40px;border-radius:var(--r-sm)}
+.cv.s44{width:44px;height:44px;border-radius:var(--r-sm)}
+.cv.s64{width:64px;height:64px}
+.cv.s96{width:96px;height:96px}
+.cv.s180{width:180px;height:180px}
+.cv.s220{width:220px;height:220px}
+.cv.s320{width:320px;height:320px}
+/* 暖调双色封面（纯 CSS，无外部资源） */
+.k1{background:radial-gradient(circle at 64% 32%,#F7D28C 0 15%,transparent 16%),linear-gradient(170deg,#C96442,#7A2E22)}
+.k2{background:linear-gradient(112deg,#F1DCB6 0 40%,#9A6042 40% 56%,#3E2A1E 56%),linear-gradient(#000,#000)}
+.k3{background:repeating-linear-gradient(74deg,#E9C576 0 4px,#C89440 4px 9px),#C89440}
+.k4{background:radial-gradient(circle at 50% 50%,#2A1E14 0 6%,#D9A05B 6% 9%,#2A1E14 9% 14%,#C9873F 14% 17%,#38271A 17% 60%,#8A5A32 60% 100%)}
+.k5{background:radial-gradient(circle at 22% 30%,rgba(247,210,140,.95) 0 3px,transparent 4px),
+  radial-gradient(circle at 58% 22%,rgba(247,210,140,.8) 0 2px,transparent 3px),
+  radial-gradient(circle at 76% 46%,rgba(247,210,140,.7) 0 3px,transparent 4px),
+  linear-gradient(180deg,#2A1C12,#4A2E1C)}
+.k6{background:linear-gradient(180deg,#E8C489 0 26%,#D09B58 26% 46%,#9A6238 46% 60%,#4A2E1C 60%)}
+.k7{background:radial-gradient(circle at 62% 40%,#F2C888 0 22%,transparent 23%),radial-gradient(circle at 30% 70%,#C2703F 0 26%,transparent 27%),linear-gradient(150deg,#8A4A2A,#3A2418)}
+.k8{background:radial-gradient(circle at 40% 34%,#FBF2E0 0 18%,transparent 19%),linear-gradient(160deg,#D8C4A2,#8A7458)}
+.k9{background:repeating-linear-gradient(0deg,#3A2418 0 3px,#C9873F 3px 7px)}
+.k10{background:linear-gradient(200deg,#F0CFA0 0 34%,#B87333 34% 62%,#2E1E14 62%)}
+
+.cc{cursor:pointer}
+.cc .cv{width:100%;aspect-ratio:1}
+.cc:hover .cv{box-shadow:inset 0 0 0 1px var(--cov-frame),0 0 0 1px var(--cov-outer),var(--sh2);transform:scale(1.02)}
+.cc .spec{margin:10px 0 4px}
+.cc b{display:block;font-family:var(--f-mast);font-size:17px;font-weight:400;line-height:1.25}
+.cc span{display:block;font-size:12.5px;color:var(--ink2);margin-top:3px}
+.cc .cv-wrap{position:relative}
+.cc .live-dot{position:absolute;top:9px;left:9px;width:6px;height:6px;border-radius:50%;background:var(--sun);display:none;
+  animation:breathe 1600ms ease-in-out infinite}
+.cc.playing .live-dot{display:block}
+@keyframes breathe{0%,100%{opacity:1}50%{opacity:.42}}
+
+/* ================= 首页 ================= */
+.hero-row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.hero-card{display:flex;align-items:center;gap:16px;padding:16px;background:var(--card);border-radius:var(--r-xl);
+  box-shadow:var(--sh2);cursor:pointer;transition:box-shadow var(--mo)}
+.hero-card:hover{box-shadow:var(--sh3)}
+.hero-meta{flex:1;min-width:0}
+.hero-meta .spec{margin-bottom:6px}
+.hero-meta b{display:block;font-family:var(--f-mast);font-size:22px;font-weight:400;line-height:1.2;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hero-meta .sub{font-size:12.5px;color:var(--ink2);margin:4px 0 12px}
+.hero-card .pct{font-family:var(--f-fig);font-size:20px;color:var(--ink2);font-variant-numeric:tabular-nums}
+.pill-row{display:flex;gap:12px;flex-wrap:wrap}
+.pill{display:inline-flex;align-items:center;gap:9px;height:44px;padding:0 20px;border-radius:999px;background:var(--card);
+  font-size:13.5px;font-weight:500;color:var(--ink);box-shadow:var(--sh1);transition:box-shadow var(--mo)}
+.pill:hover{box-shadow:var(--sh2)}
+.pill svg{width:15px;height:15px;color:var(--sun-ink)}
+.pill.cine svg{color:var(--cine)}
+.cover-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(188px,1fr));gap:28px 24px}
+
+/* ================= 列表（§4.4） ================= */
+.rowlist{display:flex;flex-direction:column;gap:2px}
+.tr{display:flex;align-items:center;gap:16px;height:52px;padding:0 12px;border-radius:var(--r-md);cursor:pointer;
+  transition:background var(--mo),box-shadow var(--mo);position:relative}
+.tr:hover{background:var(--card);box-shadow:var(--sh1)}
+.tr .idx{width:26px;flex:none;text-align:right;font-family:var(--f-fig);font-size:14px;color:var(--ink3);font-variant-numeric:oldstyle-nums}
+.tr .tmain{flex:1;min-width:0;display:flex;align-items:baseline;gap:12px}
+.tr .tname{font-size:14px;font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tr .tspec{font-size:10px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--ink3);white-space:nowrap}
+.tr .tplays{font-family:var(--f-fig);font-size:13px;color:var(--ink3);font-variant-numeric:tabular-nums;width:64px;text-align:right}
+.tr .tdur{font-family:var(--f-fig);font-size:13.5px;color:var(--ink2);font-variant-numeric:tabular-nums;width:52px;text-align:right}
+.tr .tmore{opacity:0;transition:opacity var(--mo)}
+.tr:hover .tmore,.tr:focus-within .tmore{opacity:1}
+.tr.playing{background:var(--card);box-shadow:var(--sh1)}
+.tr.playing::before{content:"";position:absolute;left:0;top:12px;bottom:12px;width:3px;border-radius:2px;background:var(--sun)}
+.tr.playing .idx{color:transparent;position:relative}
+.tr.playing .idx::after{content:"";position:absolute;right:9px;top:50%;width:8px;height:8px;margin-top:-4px;border-radius:50%;
+  background:var(--sun);box-shadow:0 0 8px var(--glow);animation:breathe 1600ms ease-in-out infinite}
+.tr.playing .tname{font-family:var(--f-mast);font-size:16px}
+.thread{height:1px;background:var(--line);margin:0 12px}
+
+/* ================= 登录（§6.1） ================= */
+#page-login .login{display:grid;grid-template-columns:1fr 1fr;height:100%;min-height:0}
+.lg-brand{background:var(--mast-bg);color:var(--mast-fg);padding:56px 48px;display:flex;flex-direction:column;position:relative;overflow:hidden}
+.lg-brand .spk::before,.lg-brand .spk::after{background-image:repeating-linear-gradient(90deg,var(--mast-line) 0 4px,transparent 4px 9px)}
+.lg-brand h1{font-family:var(--f-mast);font-size:52px;font-weight:400;line-height:1;margin-top:auto}
+.lg-en{font-size:12px;font-weight:600;letter-spacing:.32em;color:var(--sun);margin-top:14px}
+.lg-rule{width:40px;height:1px;background:var(--sun);margin:26px 0 20px;opacity:.85}
+.lg-lede{font-family:var(--f-mast);font-style:italic;font-size:15px;line-height:1.7;color:rgba(241,231,214,.72)}
+.lg-foot{margin-top:auto;font-size:10.5px;line-height:1.9;letter-spacing:.04em;color:rgba(241,231,214,.5)}
+.lg-foot .spec{color:rgba(241,231,214,.42);display:block;margin-top:6px}
+.lg-form{padding:52px 48px;overflow-y:auto;position:relative;
+  background-image:radial-gradient(520px 520px at 4% -6%,var(--glow),transparent 68%)}
+.lg-form h2{font-family:var(--f-mast);font-size:34px;font-weight:400;margin:10px 0 8px}
+.fnote{font-size:12.5px;color:var(--ink2);margin-bottom:24px}
+.field{display:block;margin-bottom:16px}
+.field>span{display:block;font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin-bottom:7px}
+.field input,.field select{width:100%;height:44px;padding:0 14px;font-size:13.5px;color:var(--ink);background:var(--card);
+  border:none;border-radius:var(--r-md);box-shadow:inset 0 0 0 1px var(--line2);outline:none;transition:box-shadow var(--mo)}
+.field input:focus,.field select:focus{box-shadow:inset 0 0 0 1px var(--line2),0 0 0 2px var(--sun),0 0 0 5px var(--sun-tint)}
+.adv-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}
+.adv-grid .wide{grid-column:1/-1}
+details{margin:4px 0 18px}
+summary{font-size:12.5px;color:var(--ink2);cursor:pointer;list-style:none;display:flex;align-items:center;gap:6px;padding:4px 0}
+summary::-webkit-details-marker{display:none}
+summary::before{content:"›";display:inline-block;transition:transform var(--mo);color:var(--ink3)}
+details[open] summary::before{transform:rotate(90deg)}
+.remember{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--ink2);margin:6px 0 22px;cursor:pointer}
+.chk{width:16px;height:16px;border-radius:var(--r-xs);background:var(--card);box-shadow:inset 0 0 0 1px var(--line2);
+  display:inline-flex;align-items:center;justify-content:center;flex:none}
+.chk.on{background:var(--fill);box-shadow:none;color:var(--fill-fg)}
+.chk svg{width:11px;height:11px}
+.ffoot{font-size:11.5px;line-height:1.8;color:var(--ink3);margin-top:18px;text-align:center}
+
+/* ================= 专辑详情（§6.4） ================= */
+.detail-head{display:flex;gap:32px;align-items:flex-end;margin-top:8px}
+.dh-cover{box-shadow:inset 0 0 0 1px var(--cov-frame),0 0 0 1px var(--cov-outer),var(--sh3)}
+.dh-meta{flex:1;min-width:0;padding-bottom:4px}
+.dh-meta .spec{margin-bottom:10px}
+.dh-title{font-family:var(--f-mast);font-size:44px;line-height:1.05;font-weight:400}
+.dh-lede{font-family:var(--f-mast);font-style:italic;font-size:17px;color:var(--ink2);margin-top:12px}
+.dh-spec{margin-top:14px}
+.dh-acts{display:flex;align-items:center;gap:12px;margin-top:22px}
+
+/* ================= 播放列表（§6.5） ================= */
+.pl-wrap{display:flex;gap:24px;min-height:0}
+.pl-left{width:264px;flex:none}
+.pl-item{display:flex;align-items:center;gap:12px;height:56px;padding:0 12px;border-radius:var(--r-md);cursor:pointer;
+  transition:background var(--mo),box-shadow var(--mo);position:relative}
+.pl-item:hover{background:var(--card);box-shadow:var(--sh1)}
+.pl-item.on{background:var(--card);box-shadow:var(--sh1)}
+.pl-item.on::before{content:"";position:absolute;left:0;top:14px;bottom:14px;width:3px;border-radius:2px;background:var(--sun)}
+.pl-item .nm{flex:1;min-width:0}
+.pl-item .nm b{display:block;font-size:13.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pl-item .nm span{display:block;font-size:10px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:3px}
+.pl-right{flex:1;min-width:0}
+.badge-cine{display:inline-flex;align-items:center;gap:6px;height:20px;padding:0 9px;border-radius:999px;background:var(--cine-tint);
+  color:var(--cine);font-size:10px;font-weight:600;letter-spacing:.14em;text-transform:uppercase}
+
+/* ================= 正在播放（§6.6） ================= */
+.np-wrap{display:flex;gap:32px;height:100%;min-height:0;position:relative}
+.np-wrap::before{content:"";position:absolute;inset:-40px 0 auto 0;height:420px;pointer-events:none;
+  background:radial-gradient(420px 300px at 22% 6%,var(--glow),transparent 66%)}
+.np-main{flex:1;min-width:0;display:flex;flex-direction:column;align-items:flex-start;position:relative}
+.np-main .cv.big{box-shadow:inset 0 0 0 1px var(--cov-frame),0 0 0 1px var(--cov-outer),var(--sh3);
+  animation:kenburns 12s ease-in-out infinite alternate}
+@keyframes kenburns{from{transform:scale(1)}to{transform:scale(1.03)}}
+.np-title{font-family:var(--f-mast);font-size:44px;line-height:1.06;font-weight:400;margin-top:26px}
+.np-sub{font-family:var(--f-mast);font-style:italic;font-size:17px;color:var(--ink2);margin-top:10px}
+.np-prog{width:100%;max-width:520px;margin-top:26px}
+.np-times{display:flex;justify-content:space-between;margin-top:10px;font-family:var(--f-fig);font-size:12.5px;
+  color:var(--ink2);font-variant-numeric:tabular-nums}
+.np-ctrls{display:flex;align-items:center;gap:18px;margin-top:22px}
+.np-side{width:300px;flex:none;display:flex;flex-direction:column;min-height:0}
+.q-item{display:flex;align-items:center;gap:12px;height:48px;padding:0 10px;border-radius:var(--r-md);cursor:pointer;transition:background var(--mo)}
+.q-item:hover{background:var(--card)}
+.q-item.on{background:var(--card);box-shadow:var(--sh1)}
+.q-item .qn{font-family:var(--f-fig);font-size:13px;color:var(--ink3);width:20px;text-align:right;font-variant-numeric:oldstyle-nums}
+.q-item .qt{flex:1;min-width:0;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.q-item .qd{font-family:var(--f-fig);font-size:12.5px;color:var(--ink3);font-variant-numeric:tabular-nums}
+.lyric{font-family:var(--f-mast);font-size:17px;line-height:2;color:var(--ink3)}
+.lyric .cur{color:var(--ink);position:relative;padding-left:14px}
+.lyric .cur::before{content:"";position:absolute;left:0;top:9px;bottom:9px;width:3px;border-radius:2px;background:var(--sun)}
+/* 窄窗降级（§6.6）：封面缩到 180 居中，待播清单折叠进迷你条的队列抽屉 */
+.mac-window.narrow .np-wrap{flex-direction:column;gap:20px}
+.mac-window.narrow .np-main{align-items:center;width:100%}
+.mac-window.narrow .np-main .cv.big{width:180px;height:180px}
+.mac-window.narrow .np-title{font-size:32px;margin-top:18px;text-align:center}
+.mac-window.narrow .np-sub{font-size:15px;text-align:center}
+.mac-window.narrow .np-prog{max-width:100%}
+.mac-window.narrow .np-ctrls{justify-content:center;flex-wrap:wrap;gap:14px;width:100%}
+.mac-window.narrow .np-ctrls .fill{display:none}
+.mac-window.narrow .np-side{display:none}
+/* 窄窗 = W1 档：内容边距 24（规范 §5 表格） */
+.mac-window.narrow #pages{padding:0 24px 28px}
+.mac-window.narrow #topbar{padding:0 24px}
+.mac-window.narrow #player{padding:0 20px;gap:14px}
+
+/* ================= 搜索（§6.7） ================= */
+.sr-group{margin-top:56px}
+.sr-hit{display:flex;align-items:center;gap:14px;height:56px;padding:0 12px;border-radius:var(--r-md);cursor:pointer;transition:background var(--mo)}
+.sr-hit:hover{background:var(--card);box-shadow:var(--sh1)}
+.sr-hit .hmain{flex:1;min-width:0}
+.sr-hit .hmain b{display:block;font-size:14px;font-weight:400}
+.sr-hit .hmain span{display:block;font-size:11.5px;color:var(--ink2);margin-top:3px}
+.hl{background:var(--sun-tint);color:var(--sun-ink);border-radius:3px;padding:0 2px}
+
+/* ================= 设置（§6.8） ================= */
+.set-card{background:var(--card);border-radius:var(--r-lg);overflow:hidden}
+.set-row{display:flex;align-items:center;gap:20px;padding:18px 20px;min-height:56px}
+.set-row+.set-row{margin-top:8px}
+.set-row .st{flex:1;min-width:0}
+.set-row .st b{display:block;font-size:13.5px;font-weight:500}
+.set-row .st span{display:block;font-size:12px;color:var(--ink2);margin-top:4px;line-height:1.5}
+.set-row .sc{flex:none;display:flex;align-items:center;gap:10px}
+.sw{width:40px;height:24px;border-radius:999px;background:var(--sunken);position:relative;transition:background var(--mo)}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:var(--card);
+  box-shadow:var(--sh1);transition:transform var(--mo)}
+.sw.on{background:var(--sun)}
+.sw.on::after{transform:translateX(16px);background:#FCF7EE}
+.danger-row{background:var(--red-tint);border-radius:var(--r-lg);padding:16px 20px;display:flex;align-items:center;gap:16px;
+  box-shadow:inset 0 0 0 1px var(--red)}
+.danger-row .st b{color:var(--red)}
+.danger-row .st span{color:var(--ink2)}
+.dot-red{width:8px;height:8px;border-radius:50%;background:var(--red);flex:none}
+
+/* ================= 迷你播放条（§4.5） ================= */
+#player{height:72px;flex:none;display:flex;align-items:center;gap:20px;padding:0 24px;background:var(--base)}
+.pb-now{display:flex;align-items:center;gap:12px;width:280px;flex:none;min-width:0;cursor:pointer}
+.pb-now .nm{min-width:0}
+.pb-now .nm b{display:block;font-size:13.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pb-now .nm span{display:block;font-size:11px;color:var(--ink2);margin-top:2px}
+.pb-mid{flex:1;min-width:0;display:flex;align-items:center;gap:16px}
+.pb-ctrls{display:flex;align-items:center;gap:6px;flex:none}
+.pb-prog{flex:1;min-width:0;display:flex;align-items:center;gap:12px}
+.pb-time{font-family:var(--f-fig);font-size:12px;color:var(--ink2);font-variant-numeric:tabular-nums;flex:none}
+.pb-right{display:flex;align-items:center;gap:12px;flex:none}
+.mac-window.narrow #player .pb-right,.mac-window.narrow #player .pb-now{display:none}
+.mac-window.narrow .pb-prog .ev-ticks{display:none}
+
+/* ================= Toast ================= */
+#toast{position:absolute;left:50%;bottom:96px;transform:translate(-50%,10px);opacity:0;pointer-events:none;
+  display:flex;align-items:center;gap:12px;padding:13px 20px 13px 16px;background:var(--mast-bg);color:var(--mast-fg);
+  border-radius:var(--r-lg);box-shadow:var(--sh3);transition:opacity var(--mo),transform var(--mo);z-index:80;max-width:80%}
+#toast.show{opacity:1;transform:translate(-50%,0)}
+#toast i{width:3px;align-self:stretch;border-radius:2px;background:var(--sun);flex:none}
+#toast span{font-size:13px}
+
+/* ================= 母题图例 ================= */
+.legend{width:100%;max-width:1120px;margin-top:26px;background:var(--stage-bar);border-radius:var(--r-lg);
+  box-shadow:var(--sh1);padding:20px 22px;display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:20px}
+.legend h3{font-size:10px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-bottom:14px;
+  grid-column:1/-1}
+.lg-item{display:flex;flex-direction:column;gap:9px}
+.lg-item b{font-family:var(--f-mast);font-size:15px;font-weight:400}
+.lg-item span{font-size:11.5px;line-height:1.6;color:var(--ink2)}
+.lg-demo{height:44px;display:flex;align-items:center;gap:12px;padding:0 12px;background:var(--card);border-radius:var(--r-md);box-shadow:var(--sh2)}
+.lg-demo.plain{box-shadow:var(--sh1)}
+
+.mac-window.rm .page.active{animation:none}
+.mac-window.rm .np-main .cv.big{animation:none}
+.mac-window.rm .cc .live-dot,.mac-window.rm .tr.playing .idx::after{animation:none}
+.mac-window.rm *{transition-duration:120ms!important}
+</style>
+</head>
+<body>
+
+<!-- ================= 图标符号 ================= -->
+<svg style="display:none" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="i-wave" viewBox="0 0 76 16"><polyline points="0,8 7,8 10,3 13,13 16,8 26,8 29,5 32,11 35,8 46,8 49,2 52,14 55,8 76,8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M3.5 11 12 3.5 20.5 11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M5.5 9.8V20h13V9.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-album" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="2.4" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-artist" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 20c1.2-4 3.8-6 7-6s5.8 2 7 6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-track" viewBox="0 0 24 24"><path d="M9 18.5a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0Z" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M9 18.5V7l10-2v11.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="19" cy="16.5" r="2.5" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M15.6 15.6 21 21" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="9" cy="7" r="2.1" fill="var(--card)" stroke="currentColor" stroke-width="1.5"/><circle cx="15" cy="12" r="2.1" fill="var(--card)" stroke="currentColor" stroke-width="1.5"/><circle cx="7" cy="17" r="2.1" fill="var(--card)" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-heart" viewBox="0 0 24 24"><path d="M12 20.2S4.6 15.7 2.8 11.3A5.3 5.3 0 0 1 12 6.7a5.3 5.3 0 0 1 9.2 4.6c-1.8 4.4-9.2 8.9-9.2 8.9Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.4v13.2L19 12Z" fill="currentColor"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M7 5h3.4v14H7zM13.6 5H17v14h-3.4z" fill="currentColor"/></symbol>
+  <symbol id="i-next" viewBox="0 0 24 24"><path d="M6 5.4v13.2L15 12Z" fill="currentColor"/><path d="M18.5 5v14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-prev" viewBox="0 0 24 24"><path d="M18 5.4v13.2L9 12Z" fill="currentColor"/><path d="M5.5 5v14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-shuffle" viewBox="0 0 24 24"><path d="M16 3.5 20 7.5l-4 4M4 20 21 3.5M21 16.5v4h-4M15 15l6 5.5M4 4l5 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-repeat" viewBox="0 0 24 24"><path d="M17 1.5 21 5.5l-4 4M3 11.5v-1.5a4 4 0 0 1 4-4h14M7 22.5l-4-4 4-4M21 12.5V14a4 4 0 0 1-4 4H3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-vol" viewBox="0 0 24 24"><path d="M11 5 6.5 9H3v6h3.5L11 19Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M15.5 9.6a3.8 3.8 0 0 1 0 4.8M18.3 6.8a7.6 7.6 0 0 1 0 10.4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-queue" viewBox="0 0 24 24"><path d="M4 6.5h16M4 12h16M4 17.5h10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M17.5 14.5v6M14.5 17.5h6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="19" cy="12" r="1.6" fill="currentColor"/></symbol>
+  <symbol id="i-chev-l" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-chev-r" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5 10 17.5 19 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 20c1.2-4 3.8-6 7-6s5.8 2 7 6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.4-5.7M20 3.5V8h-4.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M12 7v5.2l3.4 2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="6.6" height="6.6" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="13.4" y="4" width="6.6" height="6.6" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="4" y="13.4" width="6.6" height="6.6" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="13.4" y="13.4" width="6.6" height="6.6" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-rows" viewBox="0 0 24 24"><path d="M4 6.5h16M4 12h16M4 17.5h16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-sort" viewBox="0 0 24 24"><path d="M4 7h11M4 12h8M4 17h5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M17 9.5v7M14 13.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-note" viewBox="0 0 24 24"><path d="M9 18.5a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0Z" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M9 18.5V7l10-2v11.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
+  <symbol id="i-sync" viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 13.7-5.6M20 12a8 8 0 0 1-13.7 5.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M17.5 3v3.5H14M6.5 21v-3.5H10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9.5 7V5h5v2M6.5 7l1 13h9l1-13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V6M6.5 11.5 12 6l5.5 5.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 5v13M6.5 12.5 12 18l5.5-5.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+</svg>
+
+<div class="studio">
+  <!-- ================= 演示控制条 ================= -->
+  <div class="studio-bar">
+    <div class="studio-logo"><svg><use href="#i-wave"/></svg></div>
+    <div class="studio-title"><b>Overtone · UI v5「暖阳胶片」</b><span>Sunlit Film · 片基奶油 / 刊头衬线 / 光晕与齿孔 · 与 v3 玻璃、v4 纸墨并列的第三套风格</span></div>
+    <div class="studio-ctl">
+      <span class="ctl-label">主题</span>
+      <div class="seg" id="seg-theme">
+        <button data-theme-btn="light" class="on">日光</button>
+        <button data-theme-btn="dark">暗房</button>
+      </div>
+      <span class="ctl-label">强调色</span>
+      <div class="seg" id="seg-accent">
+        <button class="sw-btn on" data-accent-btn="sun" title="阳光琥珀" style="width:34px;padding:5px 0;display:inline-flex;justify-content:center"><span class="swatch" style="background:#BE8420"></span></button>
+        <button class="sw-btn" data-accent-btn="sunset" title="落日橘" style="width:34px;padding:5px 0;display:inline-flex;justify-content:center"><span class="swatch" style="background:#C05A2A"></span></button>
+        <button class="sw-btn" data-accent-btn="cine" title="胶片青" style="width:34px;padding:5px 0;display:inline-flex;justify-content:center"><span class="swatch" style="background:#2F6B62"></span></button>
+        <button class="sw-btn" data-accent-btn="dusk" title="暮紫" style="width:34px;padding:5px 0;display:inline-flex;justify-content:center"><span class="swatch" style="background:#6A4C93"></span></button>
+      </div>
+      <span class="ctl-label">窗口</span>
+      <div class="seg" id="seg-win">
+        <button data-win-btn="wide" class="on">宽窗 1040</button>
+        <button data-win-btn="narrow">窄窗 640</button>
+      </div>
+      <span class="ctl-label">动效</span>
+      <div class="seg" id="seg-rm">
+        <button data-rm-btn="full" class="on">完整</button>
+        <button data-rm-btn="reduced">精简</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= macOS 窗口 ================= -->
+  <div class="stage">
+    <div class="mac-window" id="win">
+      <div class="traffic"><i></i><i></i><i></i></div>
+      <div class="win-body">
+        <!-- 侧栏 -->
+        <aside id="sidebar">
+          <div class="sb-brand"><span class="spk"></span><b>OVERTONE</b></div>
+          <button class="nav-item" data-nav="home"><svg><use href="#i-home"/></svg><span class="lbl">首页</span></button>
+          <button class="nav-item" data-nav="library"><svg><use href="#i-album"/></svg><span class="lbl">资料库</span></button>
+          <button class="nav-item" data-nav="playlists"><svg><use href="#i-list"/></svg><span class="lbl">播放列表</span></button>
+          <button class="nav-item" data-nav="nowplaying"><svg><use href="#i-track"/></svg><span class="lbl">正在播放</span></button>
+          <button class="nav-item" data-nav="search"><svg><use href="#i-search"/></svg><span class="lbl">搜索</span></button>
+          <div class="nav-group">我的列表</div>
+          <button class="nav-item" data-goto="playlists"><svg><use href="#i-note"/></svg><span class="lbl">深夜编程</span></button>
+          <button class="nav-item" data-goto="playlists"><svg><use href="#i-note"/></svg><span class="lbl">通勤电波</span></button>
+          <div class="sb-foot">
+            <button class="nav-item" data-nav="settings"><svg><use href="#i-sliders"/></svg><span class="lbl">设置 ⌘,</span></button>
+          </div>
+        </aside>
+
+        <!-- 主列 -->
+        <div class="main-col">
+          <header id="topbar">
+            <div id="tb-left"></div>
+            <div id="tb-right">
+              <label class="tb-search"><svg><use href="#i-search"/></svg><input placeholder="搜索曲库  ⌘F"></label>
+              <button class="acct" aria-label="账号"><svg><use href="#i-user"/></svg></button>
+            </div>
+          </header>
+
+          <div id="pages">
+            <!-- ========== 登录 ========== -->
+            <section class="page" id="page-login">
+              <div class="login">
+                <div class="lg-brand">
+                  <span class="spk wide"></span>
+                  <h1>泛音</h1>
+                  <div class="lg-en">OVERTONE</div>
+                  <div class="lg-rule"></div>
+                  <p class="lg-lede">基音之上，叠加一层听感。<br>安静的 macOS Jellyfin 音乐客户端。</p>
+                  <div class="lg-foot">非官方客户端 · 与 JELLYFIN 项目无隶属关系<span class="spec">V5 · SUNLIT FILM</span></div>
+                </div>
+                <form class="lg-form" onsubmit="return false">
+                  <div class="spec">SECURE SESSION · LOCAL KEYCHAIN</div>
+                  <h2>连接服务器</h2>
+                  <p class="fnote">输入 Jellyfin 服务器地址与账号，开始收听。</p>
+                  <label class="field"><span>服务器地址</span><input value="http://192.168.1.10:8096"></label>
+                  <label class="field"><span>用户名</span><input value="ravooo"></label>
+                  <label class="field"><span>密码</span><input type="password" value="········"></label>
+                  <details>
+                    <summary>高级选项</summary>
+                    <div class="adv-grid">
+                      <label class="field"><span>协议</span><select><option>http</option><option>https</option></select></label>
+                      <label class="field"><span>端口</span><input value="8096" class="fig"></label>
+                      <label class="field wide"><span>客户端名称</span><input value="Overtone for macOS"></label>
+                    </div>
+                  </details>
+                  <label class="remember"><span class="chk on"><svg><use href="#i-check"/></svg></span>记住会话，重启免登录</label>
+                  <button class="btn primary full" id="login-btn">连接服务器</button>
+                  <p class="ffoot">地址可省略 http:// —— 客户端会自动补全。<br>会话仅保存在本机钥匙串。</p>
+                </form>
+              </div>
+            </section>
+
+            <!-- ========== 首页 ========== -->
+            <section class="page active" id="page-home">
+              <div class="masthead">
+                <div class="spec">SUNLIT FILM · 2026 年 10 月 17 日 · 星期六</div>
+                <h1>晚上好，ravooo</h1>
+                <p class="lede">基音之上，叠加一层听感。</p>
+              </div>
+
+              <div class="block">
+                <div class="spk-label"><span class="spk"></span><span class="lbl">继续播放</span><span class="fill"></span>
+                  <span class="count">3 首</span><button class="tx-btn">查看全部 →</button></div>
+                <div class="hero-row">
+                  <div class="hero-card" data-track="City Lights" data-artist="Nocturne" data-dur="222" data-cov="k1">
+                    <div class="cv k1 s96"></div>
+                    <div class="hero-meta">
+                      <div class="spec">33⅓ RPM · STEREO · 1978</div>
+                      <b>City Lights</b>
+                      <div class="sub">Nocturne · 剩 1′22″</div>
+                      <div class="ev-wrap"><div class="ev" data-p="62" data-live><i class="ev-fill"></i><i class="ev-knob"></i></div>
+                        <div class="ev-ticks"></div></div>
+                    </div>
+                    <span class="pct">62%</span>
+                  </div>
+                  <div class="hero-card" data-track="潮汐电台 Vol.3" data-artist="海雾乐队" data-dur="255" data-cov="k6">
+                    <div class="cv k6 s96"></div>
+                    <div class="hero-meta">
+                      <div class="spec">45 RPM · MONO · 2024</div>
+                      <b>潮汐电台 Vol.3</b>
+                      <div class="sub">海雾乐队 · 剩 3′18″</div>
+                      <div class="ev-wrap"><div class="ev" data-p="24" data-live><i class="ev-fill"></i><i class="ev-knob"></i></div>
+                        <div class="ev-ticks"></div></div>
+                    </div>
+                    <span class="pct">24%</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="block">
+                <div class="spk-label"><span class="spk"></span><span class="lbl">快速入口</span><span class="fill"></span></div>
+                <div class="pill-row">
+                  <button class="pill"><svg><use href="#i-heart"/></svg>收藏</button>
+                  <button class="pill"><svg><use href="#i-clock"/></svg>最近播放</button>
+                  <button class="pill"><svg><use href="#i-note"/></svg>最常播放</button>
+                  <button class="pill cine"><svg><use href="#i-shuffle"/></svg>随机播放全部</button>
+                </div>
+              </div>
+
+              <div class="block">
+                <div class="spk-label"><span class="spk"></span><span class="lbl">最近添加</span><span class="fill"></span>
+                  <span class="count">24 张</span><button class="tx-btn">查看全部 →</button></div>
+                <div class="cover-grid" id="home-grid"></div>
+              </div>
+
+              <div class="block">
+                <div class="spk-label"><span class="spk"></span><span class="lbl">最常播放 TOP 10</span><span class="fill"></span>
+                  <button class="tx-btn">查看全部 →</button></div>
+                <div class="rowlist" id="home-top"></div>
+              </div>
+            </section>
+
+            <!-- ========== 资料库 ========== -->
+            <section class="page" id="page-library">
+              <div class="masthead compact">
+                <div class="spec">LIBRARY · 1 284 首 · 96 张专辑</div>
+                <h1>资料库</h1>
+              </div>
+              <div class="block" style="margin-top:40px">
+                <div id="lib-grid" class="cover-grid"></div>
+                <div id="lib-list" class="rowlist" style="display:none"></div>
+              </div>
+            </section>
+
+            <!-- ========== 专辑详情 ========== -->
+            <section class="page" id="page-detail">
+              <div class="detail-head">
+                <div class="cv k1 s220 dh-cover"></div>
+                <div class="dh-meta">
+                  <div class="spec">DELUXE EDITION · NOCTURNE</div>
+                  <div class="dh-title">City Lights</div>
+                  <div class="dh-lede">Nocturne · 1978 · 12 首 · 48′12″</div>
+                  <div class="dh-spec spec">33⅓ RPM · STEREO · MASTERED 1978 · 24-BIT / 96 KHZ</div>
+                  <div class="dh-acts">
+                    <button class="btn primary"><svg class="ic"><use href="#i-play"/></svg>播放全部</button>
+                    <button class="btn ghost"><svg class="ic"><use href="#i-shuffle"/></svg>随机</button>
+                    <button class="ic-btn" aria-label="收藏"><svg><use href="#i-heart"/></svg></button>
+                    <button class="ic-btn" aria-label="加入播放列表"><svg><use href="#i-plus"/></svg></button>
+                    <button class="ic-btn" aria-label="更多"><svg><use href="#i-more"/></svg></button>
+                  </div>
+                </div>
+              </div>
+              <div class="block" style="margin-top:56px">
+                <div class="spk-label"><span class="spk"></span><span class="lbl">曲目</span><span class="fill"></span>
+                  <span class="count">12 首 · 48′12″</span></div>
+                <div class="rowlist" id="detail-tracks"></div>
+              </div>
+            </section>
+
+            <!-- ========== 播放列表 ========== -->
+            <section class="page" id="page-playlists">
+              <div class="masthead compact">
+                <div class="spec">PLAYLISTS · 本地 4 个 · 智能 2 个</div>
+                <h1>播放列表</h1>
+              </div>
+              <div class="pl-wrap" style="margin-top:40px">
+                <div class="pl-left">
+                  <div class="spk-label"><span class="spk"></span><span class="lbl">我的列表</span></div>
+                  <div class="pl-item on"><div class="nm"><b>深夜编程</b><span>24 首 · 1′42″</span></div></div>
+                  <div class="pl-item"><div class="nm"><b>通勤电波</b><span>38 首 · 2′28″</span></div></div>
+                  <div class="pl-item"><div class="nm"><b>雨天室内乐</b><span>16 首 · 1′08″</span></div></div>
+                  <div class="spk-label" style="margin-top:32px"><span class="spk"></span><span class="lbl">智能列表</span></div>
+                  <div class="pl-item"><div class="nm"><b>海雾乐队 全部</b><span>跟随艺术家关键字</span></div><span class="badge-cine">AUTO</span></div>
+                  <div class="pl-item"><div class="nm"><b>1978 录音室</b><span>跟随年份</span></div><span class="badge-cine">AUTO</span></div>
+                </div>
+                <div class="pl-right">
+                  <div class="spk-label">
+                    <span class="lbl">深夜编程</span><span class="fill"></span>
+                    <span class="count">24 首 · 1′42″</span>
+                    <button class="rd-act"><svg><use href="#i-sync"/></svg>已同步</button>
+                    <button class="btn primary sm">播放</button>
+                  </div>
+                  <div class="rowlist" id="pl-tracks"></div>
+                </div>
+              </div>
+            </section>
+
+            <!-- ========== 正在播放 ========== -->
+            <section class="page" id="page-nowplaying">
+              <div class="np-wrap">
+                <div class="np-main">
+                  <div class="cv k1 s320 big"></div>
+                  <div class="np-title" id="np-title">City Lights</div>
+                  <div class="np-sub" id="np-sub">Nocturne · City Lights (Deluxe Edition) · 1978</div>
+                  <div class="np-prog">
+                    <div class="ev" data-p="62" data-live><i class="ev-fill"></i><i class="ev-knob"></i></div>
+                    <div class="ev-ticks"></div>
+                    <div class="np-times"><span data-time="cur">2:17</span><span data-time="dur">3:42</span></div>
+                  </div>
+                  <div class="np-ctrls">
+                    <button class="ic-btn" aria-label="随机"><svg><use href="#i-shuffle"/></svg></button>
+                    <button class="ic-btn" aria-label="上一首"><svg><use href="#i-prev"/></svg></button>
+                    <button class="play-fab" id="np-play" aria-label="播放 / 暂停"><svg><use href="#i-pause"/></svg></button>
+                    <button class="ic-btn" aria-label="下一首"><svg><use href="#i-next"/></svg></button>
+                    <button class="ic-btn" aria-label="循环"><svg><use href="#i-repeat"/></svg></button>
+                    <span class="fill" style="flex:1"></span>
+                    <button class="pill" style="height:36px;padding:0 16px"><svg><use href="#i-clock"/></svg>睡眠定时 · 28′</button>
+                  </div>
+                </div>
+                <div class="np-side">
+                  <div class="spk-label"><span class="spk"></span><span class="lbl">待播清单</span><span class="fill"></span>
+                    <span class="count">6 首</span></div>
+                  <div class="q-item on"><span class="qn">01</span><span class="qt">City Lights</span><span class="qd">3:42</span></div>
+                  <div class="q-item"><span class="qn">02</span><span class="qt">After Hours</span><span class="qd">4:05</span></div>
+                  <div class="q-item"><span class="qn">03</span><span class="qt">Neon Rain</span><span class="qd">3:18</span></div>
+                  <div class="q-item"><span class="qn">04</span><span class="qt">午夜巴士</span><span class="qd">5:12</span></div>
+                  <div class="spk-label" style="margin-top:28px"><span class="spk"></span><span class="lbl">歌词</span><span class="fill"></span></div>
+                  <div class="lyric">
+                    <div>街灯把影子拉长</div>
+                    <div class="cur">我在城市的光里找你</div>
+                    <div>夜色像一卷未冲洗的胶片</div>
+                    <div>显影出你的轮廓</div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <!-- ========== 搜索 ========== -->
+            <section class="page" id="page-search">
+              <div class="masthead compact">
+                <div class="spec">SEARCH · KEYWORD</div>
+                <h1>搜索</h1>
+              </div>
+              <div class="sr-group" style="margin-top:40px">
+                <div class="spk-label"><span class="spk"></span><span class="lbl">歌曲</span><span class="fill"></span><span class="count">3 个结果</span></div>
+                <div class="sr-hit"><div class="cv k1 s44"></div><div class="hmain"><b><span class="hl">City</span> Lights</b><span>Nocturne · City Lights (Deluxe Edition)</span></div><span class="tdur fig" style="color:var(--ink2)">3:42</span></div>
+                <div class="sr-hit"><div class="cv k5 s44"></div><div class="hmain"><b><span class="hl">City</span> of Dust</b><span>海雾乐队 · 潮汐电台 Vol.3</span></div><span class="tdur fig" style="color:var(--ink2)">4:18</span></div>
+                <div class="sr-hit"><div class="cv k10 s44"></div><div class="hmain"><b>Neon <span class="hl">City</span> Nights</b><span>Kaito Mori · 1985</span></div><span class="tdur fig" style="color:var(--ink2)">5:02</span></div>
+              </div>
+              <div class="sr-group">
+                <div class="spk-label"><span class="spk"></span><span class="lbl">专辑</span><span class="fill"></span><span class="count">2 个结果</span></div>
+                <div class="cover-grid" id="search-grid"></div>
+              </div>
+            </section>
+
+            <!-- ========== 设置 ========== -->
+            <section class="page" id="page-settings">
+              <div class="masthead compact">
+                <div class="spec">SETTINGS · ⌘,</div>
+                <h1>设置</h1>
+              </div>
+
+              <div class="block" style="margin-top:40px">
+                <div class="spk-label"><span class="spk"></span><span class="lbl">外观</span></div>
+                <div class="set-card">
+                  <div class="set-row">
+                    <div class="st"><b>视觉风格</b><span>胶片质感、刊头衬线与暖色光晕，层次靠光与留白</span></div>
+                    <div class="sc"><div class="seg"><button>玻璃</button><button>纸墨</button><button class="on">胶片</button></div></div>
+                  </div>
+                  <div class="set-row">
+                    <div class="st"><b>外观</b><span>浅色「日光」/ 深色「暗房」/ 跟随系统</span></div>
+                    <div class="sc"><div class="seg"><button class="on">日光</button><button>暗房</button><button>跟随系统</button></div></div>
+                  </div>
+                  <div class="set-row">
+                    <div class="st"><b>强调色</b><span>琥珀金是 v5 的签名色；切换强调色会改变主按钮与进度色</span></div>
+                    <div class="sc" style="gap:6px">
+                      <span class="swatch" style="background:#BE8420"></span><span class="swatch" style="background:#C05A2A"></span>
+                      <span class="swatch" style="background:#2F6B62"></span><span class="swatch" style="background:#6A4C93"></span>
+                    </div>
+                  </div>
+                  <div class="set-row">
+                    <div class="st"><b>减少动态效果</b><span>关闭 Ken Burns、呼吸与显影动效</span></div>
+                    <div class="sc"><span class="sw"></span></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="block">
+                <div class="spk-label"><span class="spk"></span><span class="lbl">播放</span></div>
+                <div class="set-card">
+                  <div class="set-row">
+                    <div class="st"><b>直连优先</b><span>默认直接播放原始文件，关闭后走服务器转码</span></div>
+                    <div class="sc"><span class="sw on"></span></div>
+                  </div>
+                  <div class="set-row">
+                    <div class="st"><b>进度上报间隔</b><span>每隔一段时间向服务器同步播放进度</span></div>
+                    <div class="sc"><div class="seg"><button>10 秒</button><button class="on">30 秒</button><button>60 秒</button></div></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="block">
+                <div class="spk-label"><span class="spk"></span><span class="lbl">服务器与账号</span></div>
+                <div class="set-card">
+                  <div class="set-row">
+                    <div class="st"><b>ravooo @ 192.168.1.10:8096</b><span>已连接 · 上次同步 2 分钟前</span></div>
+                    <div class="sc"><span class="badge-cine">在线</span></div>
+                  </div>
+                </div>
+                <div class="danger-row" style="margin-top:12px">
+                  <span class="dot-red"></span>
+                  <div class="st" style="flex:1"><b>退出登录</b><span>清除本机钥匙串中的会话，下次需重新连接</span></div>
+                  <button class="btn ghost sm" data-goto="login"><svg class="ic" style="width:13px;height:13px"><use href="#i-trash"/></svg>退出登录</button>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <!-- ================= 迷你播放条 ================= -->
+          <div id="player">
+            <div class="pb-now" data-nav="nowplaying">
+              <div class="cv k1 s40" id="pl-cov"></div>
+              <div class="nm"><b id="pl-title">City Lights</b><span id="pl-artist">Nocturne</span></div>
+            </div>
+            <div class="pb-mid">
+              <div class="pb-ctrls">
+                <button class="ic-btn sm" aria-label="随机"><svg><use href="#i-shuffle"/></svg></button>
+                <button class="ic-btn sm" aria-label="上一首"><svg><use href="#i-prev"/></svg></button>
+                <button class="ic-btn" id="pl-play" aria-label="播放 / 暂停"><svg><use href="#i-play"/></svg></button>
+                <button class="ic-btn sm" aria-label="下一首"><svg><use href="#i-next"/></svg></button>
+                <button class="ic-btn sm" aria-label="循环"><svg><use href="#i-repeat"/></svg></button>
+              </div>
+              <div class="pb-prog">
+                <span class="pb-time" data-time="cur">2:17</span>
+                <div class="ev-wrap" style="flex:1">
+                  <div class="ev mini" data-p="62" data-live><i class="ev-fill"></i><i class="ev-knob"></i></div>
+                  <div class="ev-ticks"></div>
+                </div>
+                <span class="pb-time" data-time="dur">3:42</span>
+              </div>
+            </div>
+            <div class="pb-right">
+              <button class="ic-btn sm" aria-label="音量"><svg><use href="#i-vol"/></svg></button>
+              <button class="ic-btn sm" aria-label="待播清单"><svg><use href="#i-queue"/></svg></button>
+            </div>
+          </div>
+
+          <!-- ================= Toast ================= -->
+          <div id="toast"><i></i><span id="toast-msg">已连接 · 正在加载媒体库</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 母题图例 ================= -->
+  <div class="legend">
+    <h3>视觉母题 · 四个（规范 §2.4）</h3>
+    <div class="lg-item">
+      <div class="lg-demo"><div class="cv k3 s40"></div><span class="spec" style="letter-spacing:.12em">光晕 L2</span></div>
+      <b>光晕 Halation</b><span>暖金半透明外溢，三档分级；暗房模式下阴影换成自发光。</span>
+    </div>
+    <div class="lg-item">
+      <div class="lg-demo plain"><span class="spk"></span><span class="lbl">齿孔帧</span><span style="flex:1"></span><span class="spec">12 张</span></div>
+      <b>齿孔帧 Sprocket</b><span>两排胶片齿孔，用于区块标签、侧栏品牌行、空态插画。</span>
+    </div>
+    <div class="lg-item">
+      <div class="lg-demo plain"><div class="ev-wrap" style="flex:1"><div class="ev" data-p="46" data-live><i class="ev-fill"></i><i class="ev-knob"></i></div><div class="ev-ticks"></div></div></div>
+      <b>曝光刻度 EV Scale</b><span>全局唯一进度形态：细轨 + 光圈滑块 + 每分钟刻度点。</span>
+    </div>
+    <div class="lg-item">
+      <div class="lg-demo plain" style="align-items:center;gap:14px">
+        <span style="font-family:var(--f-mast);font-size:22px">刊头</span>
+        <span class="spec" style="margin-top:2px">33⅓ RPM · STEREO</span>
+      </div>
+      <b>刊头 + 参数行</b><span>44px 高对比衬线大标题，配 10px 全大写参数行建立级差。</span>
+    </div>
+  </div>
+</div>
+
+<script>
+window.onerror=function(m){document.title='JSERR: '+m;};
+(function(){
+"use strict";
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const win=$('#win'), root=document.documentElement;
+const P={t:137,dur:222,playing:true};
+
+/* ---------- 数据 ---------- */
+const ALBUMS=[
+  {t:'City Lights',a:'Nocturne',y:'1978',cov:'k1',spec:'33⅓ RPM · STEREO · 1978'},
+  {t:'潮汐电台 Vol.3',a:'海雾乐队',y:'2024',cov:'k6',spec:'45 RPM · MONO · 2024'},
+  {t:'Golden Hour',a:'Mika Sato',y:'1981',cov:'k3',spec:'33⅓ RPM · STEREO · 1981'},
+  {t:'暗房',a:'林原',y:'2019',cov:'k5',spec:'33⅓ RPM · STEREO · 2019'},
+  {t:'Silk Road',a:'Kaito Mori',y:'1985',cov:'k10',spec:'33⅓ RPM · STEREO · 1985'},
+  {t:'海边的房间',a:'南野',y:'2021',cov:'k6',spec:'33⅓ RPM · STEREO · 2021'},
+  {t:'Paper Moon',a:'The Sundowners',y:'1973',cov:'k8',spec:'33⅓ RPM · MONO · 1973'},
+  {t:'琥珀',a:'泛音乐队',y:'2026',cov:'k2',spec:'45 RPM · STEREO · 2026'}
+];
+const TRACKS=[
+  {t:'City Lights',s:'STEREO · 1978',d:222,plays:128},
+  {t:'After Hours',s:'STEREO · 1978',d:245,plays:96},
+  {t:'Neon Rain',s:'STEREO · 1978',d:198,plays:88},
+  {t:'午夜巴士',s:'MONO · 1978',d:312,plays:74},
+  {t:'Slow Exposure',s:'STEREO · 1978',d:266,plays:61},
+  {t:'Light Leak',s:'STEREO · 1978',d:184,plays:52},
+  {t:'Homeward',s:'STEREO · 1978',d:233,plays:44},
+  {t:'Untitled #4',s:'MONO · 1978',d:157,plays:31}
+];
+
+/* ---------- 主题 / 强调色 / 窗口 / 动效 ---------- */
+function setTheme(t){
+  root.dataset.theme=t;
+  $$('#seg-theme button').forEach(b=>b.classList.toggle('on',b.dataset.themeBtn===t));
+}
+function setAccent(a){
+  root.dataset.accent=a;
+  $$('#seg-accent .sw-btn').forEach(b=>b.classList.toggle('on',b.dataset.accentBtn===a));
+}
+function setNarrow(n){
+  win.classList.toggle('narrow',n);
+  $$('#seg-win button').forEach(b=>b.classList.toggle('on',(b.dataset.winBtn==='narrow')===n));
+  $$('#sidebar .nav-item').forEach(b=>{const l=b.querySelector('.lbl');b.title=(n&&l)?l.textContent.replace(' ⌘,',''):'';});
+}
+function setRM(r){
+  win.classList.toggle('rm',r);
+  $$('#seg-rm button').forEach(b=>b.classList.toggle('on',(b.dataset.rmBtn==='reduced')===r));
+}
+$$('#seg-theme button').forEach(b=>b.addEventListener('click',()=>setTheme(b.dataset.themeBtn)));
+$$('#seg-accent .sw-btn').forEach(b=>b.addEventListener('click',()=>setAccent(b.dataset.accentBtn)));
+$$('#seg-win button').forEach(b=>b.addEventListener('click',()=>setNarrow(b.dataset.winBtn==='narrow')));
+$$('#seg-rm button').forEach(b=>b.addEventListener('click',()=>setRM(b.dataset.rmBtn==='reduced')));
+
+/* ---------- 渲染 ---------- */
+function coverCard(al){
+  return '<div class="cc" data-goto="detail">'
+    +'<div class="cv-wrap"><div class="cv '+al.cov+'"></div><span class="live-dot"></span></div>'
+    +'<div class="spec">'+al.spec+'</div><b>'+al.t+'</b><span>'+al.a+' · '+al.y+'</span></div>';
+}
+function trackRow(tr,i){
+  return '<div class="tr" data-track="'+tr.t+'" data-artist="Nocturne" data-dur="'+tr.d+'">'
+    +'<span class="idx">'+String(i+1).padStart(2,'0')+'</span>'
+    +'<div class="tmain"><span class="tname">'+tr.t+'</span><span class="tspec">'+tr.s+'</span></div>'
+    +'<span class="tplays">'+tr.plays+'</span><span class="tdur">'+fmt(tr.d)+'</span>'
+    +'<button class="ic-btn sm tmore" aria-label="更多"><svg><use href="#i-more"/></svg></button></div>';
+}
+$('#home-grid').innerHTML=ALBUMS.slice(0,4).map(coverCard).join('');
+$('#lib-grid').innerHTML=ALBUMS.map(coverCard).join('');
+$('#search-grid').innerHTML=ALBUMS.slice(0,2).map(coverCard).join('');
+$('#home-top').innerHTML=TRACKS.slice(0,5).map(trackRow).join('');
+$('#detail-tracks').innerHTML=TRACKS.map(trackRow).join('');
+$('#pl-tracks').innerHTML=TRACKS.slice(0,6).map(trackRow).join('');
+$('#detail-tracks').firstElementChild.classList.add('playing');
+$('#lib-list').innerHTML=ALBUMS.map(a=>
+  '<div class="tr" data-track="'+a.t+'" data-artist="'+a.a+'" data-dur="222" data-cov="'+a.cov+'">'
+  +'<div class="cv '+a.cov+' s44"></div>'
+  +'<div class="tmain"><span class="tname">'+a.t+'</span><span class="tspec">'+a.spec+'</span></div>'
+  +'<span class="tplays">'+a.y+'</span><span class="tdur">'+fmt(222)+'</span></div>').join('');
+
+/* ---------- 导航 ---------- */
+const TB={
+  home:'<div class="greet"><span>晚上好</span><b>ravooo</b></div>',
+  library:'<div><div class="tb-title">资料库</div><div class="tb-extra">'
+    +'<div class="seg" id="lib-seg"><button class="on">专辑</button><button>艺人</button><button>歌曲</button><button>播放列表</button></div>'
+    +'<div class="seg" id="view-seg"><button class="on" data-view="grid" aria-label="网格视图"><svg class="ic" style="width:13px;height:13px"><use href="#i-grid"/></svg></button>'
+    +'<button data-view="list" aria-label="列表视图"><svg class="ic" style="width:13px;height:13px"><use href="#i-rows"/></svg></button></div>'
+    +'<button class="rd-act">排序 <svg><use href="#i-sort"/></svg></button></div></div>',
+  playlists:'<div><div class="tb-title">播放列表</div><div class="tb-extra"><button class="rd-act"><svg><use href="#i-plus"/></svg>新建列表</button></div></div>',
+  nowplaying:'<div class="tb-title">正在播放</div>',
+  search:'<div class="tb-title">搜索</div>',
+  settings:'<div class="tb-title">设置</div>'};
+let curPage='home', crumbSrc={label:'资料库',page:'library'};
+
+function show(id){
+  $$('.page').forEach(p=>p.classList.remove('active'));
+  $('#page-'+id).classList.add('active');
+  $('#pages').scrollTop=0;
+}
+function go(id){
+  curPage=id;
+  win.classList.toggle('login',id==='login');
+  $$('[data-nav]').forEach(b=>b.classList.toggle('active',b.dataset.nav===id));
+  if(id==='login'){show('login');return;}
+  if(id==='detail'){
+    $('#tb-left').innerHTML='<div class="crumb"><button class="cbtn" data-goto="'+crumbSrc.page+'"><svg><use href="#i-chev-l"/></svg>'+crumbSrc.label+'</button><span class="sep">›</span><b>City Lights (Deluxe Edition)</b></div>';
+  }else{
+    $('#tb-left').innerHTML=TB[id]||'';
+    if(id==='library')bindViewToggle();
+  }
+  show(id);
+  syncPlaying();
+}
+$$('[data-nav]').forEach(b=>b.addEventListener('click',()=>go(b.dataset.nav)));
+document.addEventListener('click',e=>{
+  const g=e.target.closest('[data-goto]');
+  if(g){crumbSrc={label:curPage==='search'?'搜索':'资料库',page:curPage==='search'?'search':'library'};go(g.dataset.goto);}
+});
+function bindViewToggle(){
+  const vt=$('#view-seg');if(!vt||vt.dataset.bound)return;vt.dataset.bound='1';
+  vt.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+    vt.querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');
+    const list=b.dataset.view==='list';
+    $('#lib-grid').style.display=list?'none':'';
+    $('#lib-list').style.display=list?'':'none';
+  }));
+}
+$('#login-btn').addEventListener('click',()=>{toast('已连接 · 正在加载媒体库');setTimeout(()=>go('home'),450);});
+
+/* ---------- 曝光刻度 ---------- */
+function fmt(s){return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');}
+function renderEV(el){
+  const p=Math.max(0,Math.min(100,+el.dataset.p||0));
+  el.querySelector('.ev-fill').style.width=p+'%';
+  const k=el.querySelector('.ev-knob');if(k)k.style.left=p+'%';
+}
+function refreshTimes(){
+  $$('[data-time="cur"]').forEach(e=>e.textContent=fmt(P.t));
+  $$('[data-time="dur"]').forEach(e=>e.textContent=fmt(P.dur));
+}
+function syncPlaying(){
+  const title=$('#pl-title').textContent;
+  $$('.tr,.q-item,.cc').forEach(el=>{
+    const n=el.dataset.track||el.querySelector('.qt')?.textContent;
+    el.classList.toggle('playing',!!n&&n===title&&!el.classList.contains('q-item'));
+    el.classList.toggle('on',!!n&&n===title&&el.classList.contains('q-item'));
+  });
+}
+function setTrack(title,artist,dur,cov){
+  $('#pl-title').textContent=title;
+  $('#pl-artist').textContent=artist;
+  if(cov){$('#pl-cov').className='cv '+cov+' s40';}
+  P.dur=dur;P.t=0;
+  $$('[data-live]').forEach(el=>{el.dataset.p=0;renderEV(el);});
+  $$('.hero-card .pct').forEach(el=>el.textContent='0%');
+  refreshTimes();
+  $('#np-title').textContent=title;
+  $('#np-sub').textContent=artist;
+  syncPlaying();
+  toast('正在播放 · '+title);
+}
+document.addEventListener('click',e=>{
+  const row=e.target.closest('[data-track]');
+  if(row&&!e.target.closest('.tmore'))setTrack(row.dataset.track,row.dataset.artist,+row.dataset.dur,row.dataset.cov);
+});
+let toastTimer=null;
+function toast(msg){
+  $('#toast-msg').textContent=msg;
+  $('#toast').classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>$('#toast').classList.remove('show'),2200);
+}
+function togglePlay(){
+  P.playing=!P.playing;
+  const icon='<svg><use href="#'+(P.playing?'i-pause':'i-play')+'"/></svg>';
+  $('#pl-play').innerHTML=icon;
+  $('#np-play').innerHTML=icon;
+}
+$('#pl-play').addEventListener('click',togglePlay);
+$('#np-play').addEventListener('click',togglePlay);
+
+/* ---------- 初始化 ---------- */
+$$('.ev').forEach(renderEV);
+refreshTimes();
+go('home');
+syncPlaying();
+setInterval(()=>{
+  if(!P.playing)return;
+  P.t++;if(P.t>=P.dur)P.t=0;
+  const p=Math.round(P.t/P.dur*100);
+  $$('[data-live]').forEach(el=>{el.dataset.p=p;renderEV(el);});
+  $$('.hero-card .pct').forEach(el=>el.textContent=p+'%');
+  refreshTimes();
+},1000);
+})();
+</script>
+</body>
+</html>

@@ -83,16 +83,26 @@ struct QueuePanelView: View {
     private var queueList: some View {
         List {
             ForEach(Array(music.queue.enumerated()), id: \.element.id) { index, track in
-                QueueRow(
-                    track: track,
-                    index: index,
-                    isCurrent: index == music.currentIndex,
-                    isPlaying: music.isPlaying && index == music.currentIndex,
-                    showsIndex: true,
-                    showsHandle: true,
-                    onRemove: index == music.currentIndex ? nil : { music.removeQueueItem(at: index) },
-                    onTap: { music.jump(to: index) }
-                )
+                VStack(spacing: 0) {
+                    // InstantMix 自动续播段的起点：在那一行**上方**画一条分隔。
+                    // 为什么不拆成两段 ForEach：`.onMove` 是按整个 ForEach 的索引工作的，
+                    // 拆段会让跨段拖动与 `moveQueueItems(from:to:)` 的下标语义错位；
+                    // 把分隔塞进行内 VStack 则保持「一行 = 一个条目」不变。
+                    if index == music.autoContinueStart, index > 0 {
+                        autoContinueDivider
+                    }
+
+                    QueueRow(
+                        track: track,
+                        index: index,
+                        isCurrent: index == music.currentIndex,
+                        isPlaying: music.isPlaying && index == music.currentIndex,
+                        showsIndex: true,
+                        showsHandle: true,
+                        onRemove: index == music.currentIndex ? nil : { music.removeQueueItem(at: index) },
+                        onTap: { music.jump(to: index) }
+                    )
+                }
                 .listRowBackground(Color.clear)
                 .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
                 .listRowSeparator(.hidden)
@@ -106,5 +116,37 @@ struct QueuePanelView: View {
         // paper 点线行 48（§4.4「行高 48（队列）」）
         .environment(\.defaultMinListRowHeight, Theme.isPaper ? PaperRowMetrics.listRowHeight : 52)
         .padding(.horizontal, Theme.Spacing.xs)
+    }
+
+    /// 「以下为自动续播」分隔（双风格）：
+    /// - paper（§4.7）：印刷规则标签，与页面其它小标题同一形态；
+    /// - glass（v3）：两侧细线 + 小字，材质体系里没有「标题线」这种构件。
+    @ViewBuilder
+    private var autoContinueDivider: some View {
+        if Theme.isPaper {
+            RuleLabel("以下为自动续播")
+                .padding(.horizontal, Theme.Spacing.md)
+                .padding(.vertical, 6)
+                .accessibilityElement(children: .combine)
+        } else {
+            HStack(spacing: Theme.Spacing.sm) {
+                dividerLine
+                Text("以下为自动续播")
+                    .textStyle(.caption, weight: .medium, color: Theme.textSecondary)
+                    .fixedSize()
+                    .accessibilityAddTraits(.isHeader)
+                dividerLine
+            }
+            .padding(.horizontal, Theme.Spacing.md)
+            .padding(.vertical, 4)
+        }
+    }
+
+    private var dividerLine: some View {
+        Rectangle()
+            .fill(Theme.borderSubtle)
+            .frame(height: 1)
+            .frame(maxWidth: .infinity)
+            .accessibilityHidden(true)
     }
 }

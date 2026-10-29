@@ -4,13 +4,15 @@ import SwiftUI
 /// 目标是「冷启动 → 开始播放 ≤ 2 次点击」。
 struct HomeView: View {
     let sizeClass: LayoutSizeClass
-    let onOpenAlbum: (BaseItemDto) -> Void
-    let onOpenArtist: (BaseItemDto) -> Void
+    let onOpenAlbum: (MediaItem) -> Void
+    let onOpenArtist: (MediaItem) -> Void
     let onOpenPlaylist: (Playlist) -> Void
     let onOpenFavorites: () -> Void
     let onOpenRecentlyPlayed: () -> Void
     let onOpenMostPlayed: () -> Void
     let onOpenNowPlaying: () -> Void
+    /// 听歌统计（sink 页，只从首页入口进入）
+    let onOpenStats: () -> Void
     @Binding var searchQuery: String
     let searchFocusRequest: Int
     let onSearchSubmit: () -> Void
@@ -110,6 +112,11 @@ struct HomeView: View {
             } label: {
                 Label("最常播放", systemImage: "flame")
             }
+            Button {
+                onOpenStats()
+            } label: {
+                Label("听歌统计", systemImage: "chart.bar.xaxis")
+            }
         } label: {
             if Theme.isPaper {
                 // paper 顶栏账号：纸底方块 + 强细线描边（预览 `.acct`），不用品牌渐变圆
@@ -178,11 +185,15 @@ struct HomeView: View {
 
     private func playContinue(_ item: MusicDataStore.ContinueEntry) {
         let albumTracks = store.tracks
-            .filter { ($0.albumId ?? $0.id) == item.albumKey }
-            .sorted { ($0.parentIndexNumber ?? 0, $0.indexNumber ?? 0) < ($1.parentIndexNumber ?? 0, $1.indexNumber ?? 0) }
+            .filter { ($0.albumID ?? $0.id) == item.albumKey }
+            .sorted { ($0.discNumber ?? 0, $0.trackNumber ?? 0) < ($1.discNumber ?? 0, $1.trackNumber ?? 0) }
         let list = albumTracks.isEmpty ? [item.track] : albumTracks
         let start = list.firstIndex(where: { $0.id == item.track.id }) ?? 0
-        MusicPlayerModel.shared.play(tracks: list, startAt: start)
+        MusicPlayerModel.shared.resume(
+            tracks: list,
+            startAt: start,
+            position: item.track.userData.resumePosition
+        )
         onOpenNowPlaying()
     }
 
@@ -205,6 +216,7 @@ struct HomeView: View {
             QuickPill(title: "收藏", systemImage: "heart", iconColor: Theme.favorite, action: onOpenFavorites)
             QuickPill(title: "最近播放", systemImage: "clock", action: onOpenRecentlyPlayed)
             QuickPill(title: "最常播放", systemImage: "flame", iconColor: Theme.warning, action: onOpenMostPlayed)
+            QuickPill(title: "听歌统计", systemImage: "chart.bar.xaxis", iconColor: Theme.brandText, action: onOpenStats)
             QuickPill(title: "随机播放全部", systemImage: "shuffle", iconColor: Theme.brandText) {
                 guard !store.tracks.isEmpty else { return }
                 MusicPlayerModel.shared.play(tracks: store.tracks.shuffled(), startAt: 0)
@@ -261,7 +273,7 @@ struct HomeView: View {
         }
     }
 
-    private var recentAlbums: [BaseItemDto] {
+    private var recentAlbums: [MediaItem] {
         // 三种排序都由 MusicDataStore 预排好：这里 O(1) 取用，
         // 不再每次渲染都对整个专辑库排序（首页 body 会因搜索输入/窗口尺寸/播放状态高频重跑）
         switch recentSort {
@@ -316,7 +328,7 @@ struct HomeView: View {
         .modifier(TopTracksChrome())
     }
 
-    private var topTracks: [BaseItemDto] {
+    private var topTracks: [MediaItem] {
         Array(store.mostPlayedTracks.prefix(10))
     }
 
@@ -348,7 +360,7 @@ private struct ContinueCard: View {
     var body: some View {
         Button(action: onPlay) {
             HStack(spacing: Theme.Spacing.lg) {
-                RemoteImage(url: item.track.artworkURL(width: 200), contentMode: .fill)
+                RemoteImage(ref: item.track.artworkRef(width: 200), contentMode: .fill)
                     .frame(width: coverSize, height: coverSize)
                     .clipShape(RoundedRectangle(cornerRadius: coverRadius))
                     .pagesCoverChrome(radius: coverRadius)
@@ -470,7 +482,7 @@ private struct TopTracksChrome: ViewModifier {
 // MARK: - 最常播放行（高 56）
 
 private struct TopTrackRow: View {
-    let track: BaseItemDto
+    let track: MediaItem
     let index: Int
     let sizeClass: LayoutSizeClass
     let isCurrent: Bool
@@ -491,7 +503,7 @@ private struct TopTrackRow: View {
         .acceptClickThrough()
         .focused($focused)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("第 \(index + 1) 名，\(track.name ?? "")，\(track.albumArtist ?? "")，播放 \(track.userData?.playCount ?? 0) 次")
+        .accessibilityLabel("第 \(index + 1) 名，\(track.title)，\(track.artistName ?? "")，播放 \(track.userData.playCount) 次")
         .animation(Theme.Motion.micro, value: hovered)
         .onHover { hovered = $0 }
     }
@@ -506,7 +518,7 @@ private struct TopTrackRow: View {
                 .frame(width: Theme.Spacing.xxl, alignment: .trailing)
                 .layoutPriority(2)
 
-            RemoteImage(url: track.artworkURL(width: 96), contentMode: .fill)
+            RemoteImage(ref: track.artworkRef(width: 96), contentMode: .fill)
                 .frame(width: 40, height: 40)
                 .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.cover))
                 .paperCoverFrame(true, cornerRadius: Theme.Radius.cover)
@@ -515,24 +527,24 @@ private struct TopTrackRow: View {
             // 原本「标题按理想宽度取位、点线吃掉剩余」改成弹性空白，右侧次数 / 徽标列不动
             HStack(spacing: Theme.Spacing.lg) {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(track.name ?? "")
+                    Text(track.title)
                         .textStyle(.body, weight: isCurrent ? .semibold : .medium,
                                    color: isCurrent ? Theme.Paper.signalInk : Theme.Paper.ink)
                         .lineLimit(1)
-                    Text(track.albumArtist ?? track.album ?? "")
+                    Text(track.artistName ?? track.albumTitle ?? "")
                         .textStyle(.footnote, color: Theme.Paper.ink2)
                         .lineLimit(1)
                 }
                 // 标题先按理想宽度取位（超长标题 1 行截断 + tooltip，§7）
                 .layoutPriority(1)
-                .help(track.name ?? "")
+                .help(track.title)
 
                 Spacer(minLength: 12)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
             if sizeClass >= .w2 {
-                Text("\(track.userData?.playCount ?? 0) 次")
+                Text("\(track.userData.playCount) 次")
                     .textStyle(.mono, color: Theme.Paper.ink2)
                     .layoutPriority(2)
             }
@@ -543,7 +555,7 @@ private struct TopTrackRow: View {
                 CurrentRowVU()
                     .layoutPriority(2)
             } else {
-                Text(formatPlaybackTime(track.runtimeSeconds))
+                Text(formatPlaybackTime(track.duration))
                     .textStyle(.mono, color: Theme.Paper.ink2)
                     .frame(width: 64, alignment: .trailing)
                     .layoutPriority(2)
@@ -575,28 +587,28 @@ private struct TopTrackRow: View {
             }
             .frame(width: 28, alignment: .leading)
 
-            RemoteImage(url: track.artworkURL(width: 96), contentMode: .fill)
+            RemoteImage(ref: track.artworkRef(width: 96), contentMode: .fill)
                 .frame(width: 40, height: 40)
                 .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.sm))
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(track.name ?? "")
+                Text(track.title)
                     .textStyle(.bodySM, weight: isCurrent ? .semibold : .medium,
                                color: isCurrent ? Theme.brandText : Theme.textPrimary)
                     .lineLimit(1)
-                Text(track.albumArtist ?? track.album ?? "")
+                Text(track.artistName ?? track.albumTitle ?? "")
                     .textStyle(.footnote, color: Theme.textSecondary)
                     .lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
             if sizeClass >= .w2 {
-                Text("\(track.userData?.playCount ?? 0) 次")
+                Text("\(track.userData.playCount) 次")
                     .textStyle(.footnote, color: Theme.textTertiary)
                     .frame(width: 80, alignment: .trailing)
             }
 
-            Text(formatPlaybackTime(track.runtimeSeconds))
+            Text(formatPlaybackTime(track.duration))
                 .textStyle(.mono, color: Theme.textSecondary)
                 .frame(width: 64, alignment: .trailing)
         }

@@ -120,6 +120,18 @@ final class AppSettings: ObservableObject {
     @Published var volumeNormalization: Bool { didSet { defaults.set(volumeNormalization, forKey: "settings.normalization") } }
     @Published var reportInterval: Double { didSet { defaults.set(reportInterval, forKey: "settings.reportInterval") } }
 
+    /// 队列播完后自动续播相似歌曲（Jellyfin InstantMix；飞牛退化为服务端随机）。
+    @Published var autoContinue: Bool { didSet { defaults.set(autoContinue, forKey: "settings.autoContinue") } }
+
+    /// 歌词偏移（秒）：正值 = 歌词整体推迟显示，用来补偿蓝牙 / 外接音频的延迟。
+    ///
+    /// 存原始值，使用侧通过 `effectiveLyricsOffset` 夹到 ±2 秒；这样拖动滑杆时不会被
+    /// 回写打断（与 `crossfadeSeconds` 的处理方式一致）。
+    @Published var lyricsOffsetSeconds: Double { didSet { defaults.set(lyricsOffsetSeconds, forKey: "settings.lyricsOffset") } }
+
+    /// 夹到 ±2 秒后的歌词偏移（UI 计算当前行时用这个）。
+    var effectiveLyricsOffset: Double { min(max(lyricsOffsetSeconds, -2), 2) }
+
     // MARK: 外观
 
     @Published var theme: ThemeChoice {
@@ -205,6 +217,8 @@ final class AppSettings: ObservableObject {
         crossfadeSeconds = defaults.object(forKey: "settings.crossfade") as? Double ?? 0
         volumeNormalization = defaults.object(forKey: "settings.normalization") as? Bool ?? false
         reportInterval = defaults.object(forKey: "settings.reportInterval") as? Double ?? 10
+        autoContinue = defaults.object(forKey: "settings.autoContinue") as? Bool ?? true
+        lyricsOffsetSeconds = defaults.object(forKey: "settings.lyricsOffset") as? Double ?? 0
 
         theme = ThemeChoice(rawValue: defaults.string(forKey: "settings.theme") ?? "") ?? .light
         accent = AccentChoice(rawValue: defaults.string(forKey: "settings.accent") ?? "") ?? .indigo

@@ -13,6 +13,8 @@ struct NowPlayingView: View {
 
     @State private var appeared = false
     @State private var showLyrics = false
+    /// 沉浸式全屏歌词：覆盖本页内容（Esc / 退出按钮关闭），不拆独立窗口
+    @State private var immersiveOpen = false
     @State private var lyrics: [LyricLine]?
     @State private var lyricsFailed = false
     /// 已拉取（或已确认无歌词）的曲目 id：换曲才重新请求，避免重复 GET
@@ -61,10 +63,27 @@ struct NowPlayingView: View {
                 }
             }
         }
+        // 沉浸式打开时，下层内容既不可点也不进读屏树（否则 VoiceOver 会念到被盖住的封面）
+        .disabled(immersiveOpen)
+        .accessibilityHidden(immersiveOpen)
         .task(id: music.currentTrack?.id) { await loadPalette() }
         // 歌词拉取挂成 .task(id:)：换曲 / 切到歌词页都会重启它，
         // 上一轮未完成的请求由 SwiftUI 自动取消（原来用游离 `Task {}`，不会取消）
         .task(id: lyricsRequestKey) { await loadLyricsIfNeeded() }
+        // 沉浸式歌词层：盖住本页内容（侧栏与窗口 chrome 不在本页写作用域内，保持可见）
+        .overlay {
+            if immersiveOpen {
+                ImmersiveLyricsView(
+                    lyrics: lyrics ?? [],
+                    failed: lyricsFailed,
+                    sizeClass: sizeClass,
+                    offset: lyricsOffset,
+                    palette: palette,
+                    onClose: { immersiveOpen = false }
+                )
+            }
+        }
+        .animation(reduceMotion ? Theme.Motion.reduced : Theme.Motion.base, value: immersiveOpen)
         .onAppear {
             showLyrics = settings.showLyrics
             appeared = true
@@ -78,6 +97,10 @@ struct NowPlayingView: View {
     private var lyricsRequestKey: String {
         "\(music.currentTrack?.id ?? "-")|\(showLyrics)"
     }
+
+    /// 生效的歌词偏移（秒，正值 = 歌词推迟）。
+    /// 设置侧已夹到 ±2s（`AppSettings.effectiveLyricsOffset`），菜单写入前再夹一次。
+    private var lyricsOffset: Double { settings.effectiveLyricsOffset }
 
     // MARK: - 顶栏
 
@@ -163,7 +186,13 @@ struct NowPlayingView: View {
                 .accessibilityHidden(showLyrics)
                 .overlay {
                     if showLyrics {
-                        LyricsPane(lyrics: lyrics, failed: lyricsFailed)
+                        LyricsPane(
+                            lyrics: lyrics,
+                            failed: lyricsFailed,
+                            offset: lyricsOffset,
+                            onOffsetChange: { value in settings.lyricsOffsetSeconds = value },
+                            onEnterImmersive: { immersiveOpen = true }
+                        )
                     }
                 }
 
@@ -231,7 +260,7 @@ struct NowPlayingView: View {
         let side = min(maxCover, 280)
 
         return VStack(spacing: 18) {
-            RemoteImage(url: music.currentTrack?.artworkURL(width: 640), contentMode: .fill)
+            RemoteImage(ref: music.currentTrack?.artworkRef(width: 640), contentMode: .fill)
                 .frame(width: side, height: side)
                 .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.cover))
                 .paperCoverFrame(true)
@@ -245,14 +274,14 @@ struct NowPlayingView: View {
                 if music.currentTrack != nil {
                     OnAirBadge()
                 }
-                Text(music.currentTrack?.name ?? "未在播放")
+                Text(music.currentTrack?.title ?? "未在播放")
                     .textStyle(.display, color: Theme.Paper.ink)
                     .fontDesign(.serif)
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
 
-                Text([music.currentTrack?.albumArtist, music.currentTrack?.album]
+                Text([music.currentTrack?.artistName, music.currentTrack?.albumTitle]
                     .compactMap { $0 }.joined(separator: " · "))
                     .textStyle(.bodySM, color: Theme.Paper.ink2)
                     .lineLimit(1)
@@ -266,7 +295,7 @@ struct NowPlayingView: View {
     /// glass（v3）形态：与改动前逐字一致
     private func glassCoverPane(maxCover: CGFloat) -> some View {
         VStack(spacing: 18) {
-            RemoteImage(url: music.currentTrack?.artworkURL(width: 640), contentMode: .fill)
+            RemoteImage(ref: music.currentTrack?.artworkRef(width: 640), contentMode: .fill)
                 .frame(width: maxCover, height: maxCover)
                 // 全部封面统一圆角 md（§7.2 规则 2）
                 .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
@@ -286,14 +315,14 @@ struct NowPlayingView: View {
                             height: 14
                         )
                     }
-                    Text(music.currentTrack?.name ?? "未在播放")
+                    Text(music.currentTrack?.title ?? "未在播放")
                         .textStyle(.title2, color: Theme.textPrimary)
                         .lineLimit(2)
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                Text([music.currentTrack?.albumArtist, music.currentTrack?.album]
+                Text([music.currentTrack?.artistName, music.currentTrack?.albumTitle]
                     .compactMap { $0 }.joined(separator: " · "))
                     .textStyle(.bodySM, color: Theme.textSecondary)
                     .lineLimit(1)
@@ -623,7 +652,7 @@ struct NowPlayingView: View {
         lyrics = nil
         lyricsFailed = false
         do {
-            let fetched = try await APIClient.shared.fetchLyrics(itemId: itemId)
+            let fetched = try await MusicDataStore.shared.lyrics(trackID: itemId)
             // 快速切歌时先发的请求可能后返回：丢弃不属于当前曲目的结果，
             // 否则会把上一首的歌词盖到当前曲目上
             guard !Task.isCancelled, music.currentTrack?.id == itemId else { return }
@@ -650,11 +679,12 @@ struct NowPlayingView: View {
             palette = nil
             return
         }
-        guard let track = music.currentTrack, let url = track.artworkURL(width: 640) else {
+        guard let ref = music.currentTrack?.artworkRef(width: 640) else {
             palette = nil
             return
         }
-        let image = await ImageCache.shared.image(for: url)
+        // 与封面用同一个引用取图：缓存键是 `ArtworkRef.cacheKey`，命中同一份缓存
+        let image = await ImageCache.shared.image(for: ref)
         palette = Palette(image: image)
     }
 }
@@ -667,7 +697,7 @@ struct NowPlayingView: View {
 /// 当前行 `surfaceSelected` + 3pt 指示条 + 频谱，封面 36 圆角 10。
 /// paper：点线行（§4.4）48pt —— 走 `PaperTrackRow`，当前行红条 + ON AIR + VU 迷你段条。
 struct QueueRow: View {
-    let track: BaseItemDto
+    let track: MediaItem
     let index: Int
     var isNext = false
     var isCurrent = false
@@ -756,23 +786,23 @@ struct QueueRow: View {
                         .frame(width: 22, alignment: .leading)
                     }
 
-                    RemoteImage(url: track.artworkURL(width: 96), contentMode: .fill)
+                    RemoteImage(ref: track.artworkRef(width: 96), contentMode: .fill)
                         .frame(width: 36, height: 36)
                         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
 
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(track.name ?? "")
+                        Text(track.title)
                             .textStyle(.bodySM,
                                        weight: isNext || isCurrent ? .semibold : .medium,
                                        color: isCurrent ? Theme.brandText : Theme.textPrimary)
                             .lineLimit(1)
-                        Text(track.albumArtist ?? track.album ?? "")
+                        Text(track.artistName ?? track.albumTitle ?? "")
                             .textStyle(.footnote, color: Theme.textSecondary)
                             .lineLimit(1)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                    Text(formatPlaybackTime(track.runtimeSeconds))
+                    Text(formatPlaybackTime(track.duration))
                         .textStyle(.monoSM, color: Theme.textTertiary)
                         .frame(width: 40, alignment: .trailing)
                 }
@@ -839,9 +869,9 @@ struct QueueRow: View {
     private var rowLabel: String {
         var parts: [String] = []
         if showsIndex { parts.append("第 \(index + 1) 首") }
-        parts.append(track.name ?? "")
-        if let artist = track.albumArtist, !artist.isEmpty { parts.append(artist) }
-        parts.append(formatPlaybackTime(track.runtimeSeconds))
+        parts.append(track.title)
+        if let artist = track.artistName, !artist.isEmpty { parts.append(artist) }
+        parts.append(formatPlaybackTime(track.duration))
         if isCurrent { parts.append(isPlaying ? "播放中" : "已暂停") }
         return parts.joined(separator: "，")
     }
@@ -851,13 +881,17 @@ struct QueueRow: View {
 //
 // 全部嵌进 `NowPlayingView`：共享层由其他文件负责，这里不新增模块级类型名，
 // 避免与 Theme.swift / Components.swift 的既有或新增类型撞名。
+//
+// `AmbientLayer` / `Palette` 对模块内可见（不是 fileprivate）：`ImmersiveLyricsView`
+// 要复用同一份封面取色与色斑算法 —— 沉浸式背景与主区氛围层必须同源，否则同一首歌
+// 在两个界面会是两种色调。
 
 extension NowPlayingView {
     /// 主区卡内的氛围层：**两枚**克制色斑（封面主色的低饱和渐变，α ≤ 20%）。
     ///
     /// 与窗口底的 `AmbientWash` 同源不同量：那里是四组大 wash，这里是两枚小色斑，
     /// 避免内容卡内部过艳；「降低透明度」开启时压暗到 60% 并降饱和（§7.3）。
-    fileprivate struct AmbientLayer: View {
+    struct AmbientLayer: View {
         let palette: Palette
         var reduceMotion = false
 
@@ -929,7 +963,7 @@ extension NowPlayingView {
     ///
     /// 本地降采样到 8×8 求平均（不新增共享 API）：平均色转 HSB 后压饱和度、收亮度，
     /// 灰度封面（饱和度过低）或取色失败返回 nil，由调用方回落品牌色系。
-    fileprivate struct Palette: Equatable {
+    struct Palette: Equatable {
         let primary: Color
         let secondary: Color
 
@@ -1012,7 +1046,7 @@ extension NowPlayingView {
     /// 待播清单 / 抽屉的一行：队列下标 + 曲目（下标即 id，队列内唯一）
     fileprivate struct QueueEntry: Identifiable {
         let index: Int
-        let track: BaseItemDto
+        let track: MediaItem
 
         var id: Int { index }
     }
@@ -1163,12 +1197,22 @@ private struct NowPlayingProgressSection: View {
 
 // MARK: - 歌词面板（单独观察播放进度）
 
-/// 歌词行：当前行 16/600 `brandText`，其余 14 `textTertiary`（§4.1 第二谐波语义）。
+/// 歌词面板：当前行 16/600 品牌色，其余 14 `textTertiary`（§4.1 第二谐波语义）。
 ///
-/// 单独成视图的原因同 `NowPlayingProgressSection`：只有「当前行高亮」依赖播放进度。
+/// 单独成视图的原因同 `NowPlayingProgressSection`：只有「当前行高亮」与「偏移」依赖播放进度 /
+/// 设置，把它们收在这里，2Hz 的进度 tick 与偏移变更不会重算整页。
+///
+/// 工具行（偏移菜单 + 沉浸式入口）只在**有同步歌词**时出现：纯文本歌词没有时间轴可调，
+/// 出现一个永远不生效的偏移控件只会让人怀疑是坏的。工具行放在歌词区顶部、与歌词同层，
+/// 不参与「封面 / 歌词」切换的布局（切换仍是同一块位置上换内容）。
 private struct LyricsPane: View {
     let lyrics: [LyricLine]?
     let failed: Bool
+    /// 生效的歌词偏移（秒，正值 = 歌词推迟）
+    let offset: Double
+    /// 写回设置（调用方负责持久化；值已夹到 ±2s）
+    let onOffsetChange: (Double) -> Void
+    let onEnterImmersive: () -> Void
 
     @ObservedObject private var progress = MusicPlayerModel.shared.progress
     @Environment(\.appReduceMotion) private var reduceMotion
@@ -1176,36 +1220,11 @@ private struct LyricsPane: View {
     var body: some View {
         Group {
             if let lyrics, !lyrics.isEmpty {
-                // 每帧只算一次高亮行：写成 `index == activeLyricIndex` 会让
-                // ForEach 里每个已实例化的行各扫一遍歌词表（可见行数 × n 次/帧）。
-                let active = activeLyricIndex
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(spacing: 14) {
-                            // 用 indices 而不是 Array(enumerated())：后者每帧都要复制一份
-                            // (offset, LyricLine) 元组数组，而 id 本来就是位置，身份不变
-                            ForEach(lyrics.indices, id: \.self) { index in
-                                let isActive = index == active
-                                Text(lyrics[index].text ?? "")
-                                    .textStyle(
-                                        isActive ? .title4 : .body,
-                                        weight: isActive ? .semibold : nil,
-                                        color: isActive ? Theme.brandText : Theme.textTertiary
-                                    )
-                                    .frame(maxWidth: .infinity)
-                                    .multilineTextAlignment(.center)
-                                    .id(index)
-                                    .animation(Theme.Motion.base, value: isActive)
-                            }
-                        }
-                        .padding(.vertical, Theme.Spacing.lg)
+                VStack(spacing: Theme.Spacing.sm) {
+                    if LyricsTimeline.hasSyncedLyrics(lyrics) {
+                        toolbar
                     }
-                    .onChange(of: active) { index in
-                        guard let index else { return }
-                        withAnimation(reduceMotion ? Theme.Motion.reduced : Theme.Motion.base) {
-                            proxy.scrollTo(index, anchor: .center)
-                        }
-                    }
+                    lyricsScroll(lyrics)
                 }
                 .frame(maxWidth: 420)
                 // 填满封面块那一格：歌词与封面同一块位置（见 `mainCard` 的注释），
@@ -1221,18 +1240,101 @@ private struct LyricsPane: View {
         .transition(.opacity)
     }
 
-    /// 当前应高亮的歌词行（时间戳 ≤ 播放进度的最后一行）
-    private var activeLyricIndex: Int? {
-        guard let lyrics else { return nil }
-        var index: Int?
-        for (i, line) in lyrics.enumerated() {
-            if let start = line.startSeconds, start <= progress.position + 0.2 {
-                index = i
-            } else if line.startSeconds != nil {
-                // 时间戳是升序的，越过当前进度即可停
-                break
+    // MARK: 歌词工具行（偏移 / 沉浸式）
+
+    private var toolbar: some View {
+        HStack(spacing: Theme.Spacing.sm) {
+            offsetMenu
+            Spacer(minLength: 0)
+            immersiveButton
+        }
+        .padding(.horizontal, Theme.Spacing.xxs)
+    }
+
+    private var offsetMenu: some View {
+        TokenMenu(
+            accessibilityLabel: "歌词偏移 \(LyricsTimeline.offsetText(offset))",
+            help: "调整歌词与声音的时间差（正值 = 歌词推迟显示）"
+        ) {
+            Button("-0.5 秒") { nudge(-0.5) }
+            Button("-0.1 秒") { nudge(-0.1) }
+            Button("+0.1 秒") { nudge(0.1) }
+            Button("+0.5 秒") { nudge(0.5) }
+            Divider()
+            Button("重置为 0.0 秒") { onOffsetChange(0) }
+                .disabled(offset == 0)
+        } label: {
+            chip(icon: "clock.arrow.circlepath", text: "偏移 \(LyricsTimeline.offsetText(offset))")
+        }
+    }
+
+    private var immersiveButton: some View {
+        Button(action: onEnterImmersive) {
+            chip(icon: "arrow.up.left.and.arrow.down.right", text: "沉浸")
+        }
+        .buttonStyle(.plain)
+        .help("沉浸式全屏歌词")
+        .accessibilityLabel("打开沉浸式全屏歌词")
+    }
+
+    /// 工具行小胶囊：纸墨 = sunken 纸底 + hairline，玻璃 = 薄玻璃（`glassControl` 两端都成立）
+    private func chip(icon: String, text: String) -> some View {
+        HStack(spacing: Theme.Spacing.xs) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .medium))
+            Text(text)
+                .textStyle(.caption, weight: .medium)
+        }
+        .foregroundStyle(Theme.isPaper ? Theme.Paper.ink2 : Theme.textSecondary)
+        .padding(.horizontal, Theme.Spacing.sm)
+        .frame(height: 26)
+        .glassControl(cornerRadius: Theme.Radius.sm, strength: .thin)
+        .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.sm))
+    }
+
+    /// 菜单步进：写入前夹到 ±2s，避免连点把原始值堆到几十秒
+    private func nudge(_ delta: Double) {
+        onOffsetChange(LyricsTimeline.clampedOffset(offset + delta))
+    }
+
+    // MARK: 歌词滚动区
+
+    private func lyricsScroll(_ lyrics: [LyricLine]) -> some View {
+        // 每帧只算一次高亮行：写成 `index == active` 会让 ForEach 里每个已实例化的行
+        // 各扫一遍歌词表（可见行数 × n 次/帧）。
+        let active = activeLyricIndex(lyrics)
+        return ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 14) {
+                    // 用 indices 而不是 Array(enumerated())：后者每帧都要复制一份
+                    // (offset, LyricLine) 元组数组，而 id 本来就是位置，身份不变
+                    ForEach(lyrics.indices, id: \.self) { index in
+                        let isActive = index == active
+                        Text(lyrics[index].text)
+                            .textStyle(
+                                isActive ? .title4 : .body,
+                                weight: isActive ? .semibold : nil,
+                                color: isActive ? Theme.brandText : Theme.textTertiary
+                            )
+                            .frame(maxWidth: .infinity)
+                            .multilineTextAlignment(.center)
+                            .id(index)
+                            .animation(Theme.Motion.base, value: isActive)
+                    }
+                }
+                .padding(.vertical, Theme.Spacing.lg)
+            }
+            .onChange(of: active) { index in
+                guard let index else { return }
+                withAnimation(reduceMotion ? Theme.Motion.reduced : Theme.Motion.base) {
+                    proxy.scrollTo(index, anchor: .center)
+                }
             }
         }
-        return index
+    }
+
+    /// 当前应高亮的歌词行：统一走 `LyricsTimeline`（与沉浸式共用同一套偏移算法）
+    private func activeLyricIndex(_ lyrics: [LyricLine]) -> Int? {
+        LyricsTimeline.activeIndex(lyrics: lyrics, position: progress.position, offset: offset)
     }
 }

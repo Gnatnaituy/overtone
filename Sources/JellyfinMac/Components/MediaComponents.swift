@@ -12,19 +12,45 @@ final class ImageCache {
     private var tasks: [String: Task<Data?, Never>] = [:]
     private var order: [String] = []
 
+    /// 按 URL 取图（缓存键 = URL 字符串）
     func image(for url: URL) async -> NSImage? {
-        let key = url.absoluteString
-        if let image = cache[key] {
+        await image(for: url, cacheKey: nil)
+    }
+
+    /// 按领域层封面引用取图：URL 交给活动后端解析，**缓存键用 `ArtworkRef.cacheKey`**。
+    ///
+    /// 同时用 `ArtworkRef.contentCacheKey` 做**跨后端别名**：同一首歌/同一张专辑在
+    /// Jellyfin 与飞牛各有一份图，但内容相同 —— 用同一个别名键，只下一遍、只存一份。
+    func image(for ref: ArtworkRef) async -> NSImage? {
+        guard let url = ArtworkResolver.url(for: ref) else { return nil }
+        return await image(for: url, cacheKey: ref.cacheKey, aliasKey: ref.contentCacheKey)
+    }
+
+    /// 真正的取图实现：`cacheKey` 非空时用它做缓存键（与签名 URL 解耦）。
+    /// `aliasKey` 是跨后端的内容身份键：命中任一键即可复用；取回后两个键都存。
+    func image(for url: URL, cacheKey: String?, aliasKey: String? = nil) async -> NSImage? {
+        let primary = cacheKey ?? url.absoluteString
+        let lookupKeys = [aliasKey, primary].compactMap { $0 }
+        for key in lookupKeys where cache[key] != nil {
+            let image = cache[key]!
             // 命中即刷新 LRU 位置
             touch(key)
             return image
         }
 
+        // 并发去重键：优先用内容身份 —— 两个后端同时要同一张图时只下载一次
+        let key = aliasKey ?? primary
         let data: Data?
         if let task = tasks[key] {
             data = await task.value
         } else {
             let task = Task<Data?, Never> {
+                // 封面也可能是受保护资源（飞牛要 Cookie / authx，经中继还要 mode=relay）。
+                // 后端提供授权 request 时用它，否则退回普通 GET（Jellyfin 的 token 在 URL query 里）。
+                if let request = BackendRegistry.shared.active.authorizedImageRequest(for: url) {
+                    guard let (data, _) = try? await URLSession.shared.data(for: request) else { return nil }
+                    return data
+                }
                 guard let (data, _) = try? await URLSession.shared.data(from: url) else { return nil }
                 return data
             }
@@ -35,12 +61,15 @@ final class ImageCache {
         // 并发去重只覆盖下载：两个调用方等的是同一个下载任务，但都会走到这里各自解码。
         // 先复查一次缓存，避免同一张图被解码成两个 NSImage 并写入两次
         // （同一 URL 的调用方在「正在播放」页同时出现：大封面 + 封面取色）。
-        if let image = cache[key] {
-            touch(key)
+        for lookup in lookupKeys where cache[lookup] != nil {
+            let image = cache[lookup]!
+            touch(lookup)
             return image
         }
         guard let data, let image = NSImage(data: data) else { return nil }
-        store(image: image, key: key)
+        for lookup in lookupKeys {
+            store(image: image, key: lookup)
+        }
         return image
     }
 
@@ -82,11 +111,33 @@ final class ImageCache {
     var count: Int { cache.count }
 }
 
-/// 远端封面：加载中显示 `surfaceSunken` 占位 + 极淡音符图标
+/// 远端封面：加载中显示 `surfaceSunken` 占位 + 极淡音符图标。
+///
+/// 两个入口：`url:`（调用方已拿到 URL）与 `ref:`（领域层的 `ArtworkRef` —— URL 交给
+/// 活动后端解析，缓存键用 `ArtworkRef.cacheKey`）。界面一律走 `ref:`：飞牛封面地址
+/// 可能逐请求签名，以 URL 为缓存键会全部 miss（滚动即重新下载）。
 struct RemoteImage: View {
-    let url: URL?
+    private let url: URL?
+    private let ref: ArtworkRef?
     var contentMode: ContentMode = .fill
     @State private var image: NSImage?
+
+    init(url: URL?, contentMode: ContentMode = .fill) {
+        self.url = url
+        self.ref = nil
+        self.contentMode = contentMode
+    }
+
+    init(ref: ArtworkRef?, contentMode: ContentMode = .fill) {
+        self.url = nil
+        self.ref = ref
+        self.contentMode = contentMode
+    }
+
+    /// 取图任务的 id：稳定缓存键（签名变化不触发重下）
+    private var requestKey: String? {
+        ref?.cacheKey ?? url?.absoluteString
+    }
 
     var body: some View {
         // 用 if/else 直接切内容（默认转场就是淡入），不再套一层 ZStack + 显式 transition：
@@ -102,7 +153,11 @@ struct RemoteImage: View {
             }
         }
         .animation(Theme.Motion.base, value: image == nil)
-        .task(id: url) {
+        .task(id: requestKey) {
+            if let ref {
+                image = await ImageCache.shared.image(for: ref)
+                return
+            }
             guard let url else {
                 image = nil
                 return
@@ -393,7 +448,7 @@ struct SortMenu: View {
 // MARK: - 专辑卡片（封面 1:1 圆角 10 + e1；hover → e2 + 上移 2 + 播放角标）
 
 struct PosterCard: View {
-    let item: BaseItemDto
+    let item: MediaItem
     /// 仅用于请求合适分辨率的封面图
     var width: CGFloat = 320
     var posterAspect: CGFloat = 1.0
@@ -416,11 +471,11 @@ struct PosterCard: View {
             .acceptClickThrough()
             .focused($focused)
             .focusRing(focused, cornerRadius: Theme.isPaper ? Theme.Radius.cover : Theme.Radius.md)
-            .help("打开 \(item.name ?? "专辑")")
-            .accessibilityLabel("\(item.name ?? "未知标题")，\(subtitle)")
+            .help("打开 \(item.title)")
+            .accessibilityLabel("\(item.title)，\(subtitle)")
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(item.name ?? "未知标题")
+                Text(item.title)
                     .textStyle(Theme.isPaper ? .body : .bodySM, weight: .semibold, color: Theme.textPrimary)
                     // 专辑名走衬线（§4.6 网格卡：封面 + 衬线专辑名 14/600）
                     .fontDesign(Theme.isPaper ? .serif : .default)
@@ -440,7 +495,7 @@ struct PosterCard: View {
     }
 
     private var cover: some View {
-        RemoteImage(url: item.artworkURL(width: Int(width)), contentMode: .fill)
+        RemoteImage(ref: item.artworkRef(width: Int(width)), contentMode: .fill)
             .aspectRatio(posterAspect, contentMode: .fit)
             .frame(maxWidth: .infinity)
             .clipShape(RoundedRectangle(cornerRadius: Theme.isPaper ? Theme.Radius.cover : Theme.Radius.md))
@@ -467,18 +522,19 @@ struct PosterCard: View {
     }
 
     private var subtitle: String {
-        switch item.type {
-        case "MusicAlbum":
-            if let artist = item.albumArtist, let year = item.productionYear {
+        switch item.kind {
+        case .album:
+            // 专辑卡：专辑艺人 · 年份（字段缺失时退到能拿到的那个）
+            if let artist = item.artistName, let year = item.year {
                 return "\(artist) · \(year)"
             }
-            return item.albumArtist ?? item.productionYear.map(String.init) ?? ""
-        case "MusicArtist":
+            return item.artistName ?? item.year.map(String.init) ?? ""
+        case .artist:
             return "艺人"
-        case "Audio":
-            return item.album ?? item.albumArtist ?? ""
+        case .track:
+            return item.albumTitle ?? item.artistName ?? ""
         default:
-            return item.productionYear.map(String.init) ?? ""
+            return item.year.map(String.init) ?? ""
         }
     }
 }
@@ -486,7 +542,7 @@ struct PosterCard: View {
 // MARK: - 艺人卡片（圆形头像 + 居中名 13/500）
 
 struct ArtistCard: View {
-    let artist: BaseItemDto
+    let artist: MediaItem
     var width: CGFloat = 300
     let onTap: () -> Void
 
@@ -497,7 +553,7 @@ struct ArtistCard: View {
     var body: some View {
         Button(action: onTap) {
             VStack(spacing: Theme.Spacing.md) {
-                RemoteImage(url: APIClient.shared.primaryImageURL(for: artist, width: Int(width)), contentMode: .fill)
+                RemoteImage(ref: artist.artworkRef(width: Int(width)), contentMode: .fill)
                     .aspectRatio(1, contentMode: .fit)
                     .frame(maxWidth: .infinity)
                     .clipShape(Circle())
@@ -523,7 +579,7 @@ struct ArtistCard: View {
                     // paper 不用上浮（§4.6）：hover 下沉 1px 的活版按压感
                     .offset(y: Theme.isPaper && hovered && !reduceMotion ? 1 : 0)
 
-                Text(artist.name ?? "未知艺术家")
+                Text(artist.title)
                     .textStyle(.bodySM, weight: .medium, color: Theme.textPrimary)
                     .fontDesign(Theme.isPaper ? .serif : .default)
                     .lineLimit(1)
@@ -542,14 +598,14 @@ struct ArtistCard: View {
         // 位移只有 2pt，120ms 已经足够顺，且"跟手"感更好。
         .animation(Theme.Motion.micro, value: hovered)
         .onHover { hovered = $0 }
-        .help(artist.name ?? "艺人")
+        .help(artist.title)
     }
 }
 
 // MARK: - 曲目行操作（收藏 / 更多；hover 与键盘 focus 等价，均可 Tab 到达）
 
 struct TrackRowActions: View {
-    let track: BaseItemDto
+    let track: MediaItem
     /// 是否常显（收藏状态为真时常显）
     var alwaysVisible = false
     var revealed: Bool
@@ -561,7 +617,7 @@ struct TrackRowActions: View {
 
     private enum Action: Hashable { case favorite, more, info, remove }
 
-    private var isFavorite: Bool { track.userData?.isFavorite == true }
+    private var isFavorite: Bool { track.isFavorite }
     private var visible: Bool { revealed || alwaysVisible || isFavorite || focusedAction != nil }
 
     var body: some View {
@@ -730,7 +786,7 @@ struct RowMiniVU: View {
 /// ON AIR、VU 段条这四处一旦各写一遍，任何一处的微调都会让同一个「标志性组件」
 /// 在三个页面里不一致。
 struct PaperTrackRow<Actions: View>: View {
-    let track: BaseItemDto
+    let track: MediaItem
     let index: Int
     var showsIndex = true
     var isCurrent = false
@@ -763,7 +819,7 @@ struct PaperTrackRow<Actions: View>: View {
                         indexColumn
                     }
 
-                    RemoteImage(url: track.artworkURL(width: 96), contentMode: .fill)
+                    RemoteImage(ref: track.artworkRef(width: 96), contentMode: .fill)
                         .frame(width: PaperRowMetrics.cover, height: PaperRowMetrics.cover)
                         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.cover))
                         .paperCoverFrame(true)
@@ -853,7 +909,7 @@ struct PaperTrackRow<Actions: View>: View {
 
     private var titleColumn: some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(track.name ?? "")
+            Text(track.title)
                 .textStyle(.body, weight: .semibold,
                            color: isCurrent ? Theme.brandText : Theme.Paper.ink)
                 .lineLimit(1)
@@ -878,12 +934,12 @@ struct PaperTrackRow<Actions: View>: View {
             .padding(.leading, Theme.Spacing.lg)
         } else {
             HStack(spacing: 0) {
-                if showsPlayCount, let count = track.userData?.playCount, count > 0 {
-                    Text("\(count) 次")
+                if showsPlayCount, track.userData.playCount > 0 {
+                    Text("\(track.userData.playCount) 次")
                         .textStyle(.mono, color: Theme.Paper.ink3)
                         .padding(.trailing, Theme.Spacing.lg)
                 }
-                Text(formatPlaybackTime(track.runtimeSeconds))
+                Text(formatPlaybackTime(track.duration))
                     .textStyle(.mono, color: Theme.Paper.ink2)
                     .frame(width: PaperRowMetrics.duration, alignment: .trailing)
             }
@@ -901,22 +957,22 @@ struct PaperTrackRow<Actions: View>: View {
     /// 点线行副标题：艺人 · 专辑（播放次数在宽断点是独立的 mono 列）
     private var subtitleText: String {
         var parts: [String] = []
-        if let artist = track.albumArtist, !artist.isEmpty {
+        if let artist = track.artistName, !artist.isEmpty {
             parts.append(artist)
-        } else if let album = track.album, !album.isEmpty {
+        } else if let album = track.albumTitle, !album.isEmpty {
             parts.append(album)
         }
-        if let album = track.album, !album.isEmpty, album != track.albumArtist {
+        if let album = track.albumTitle, !album.isEmpty, album != track.artistName {
             parts.append(album)
         }
-        if !showsPlayCount, let count = track.userData?.playCount, count > 0 {
-            parts.append("播放 \(count) 次")
+        if !showsPlayCount, track.userData.playCount > 0 {
+            parts.append("播放 \(track.userData.playCount) 次")
         }
         return parts.joined(separator: " · ")
     }
 
     private var albumArtistText: String {
-        [track.albumArtist, track.album]
+        [track.artistName, track.albumTitle]
             .compactMap { $0 }
             .filter { !$0.isEmpty }
             .joined(separator: " · ")
@@ -924,17 +980,17 @@ struct PaperTrackRow<Actions: View>: View {
 
     /// 点线行「艺人」列的文字（没有 albumArtist 时退回专辑名，避免出现空列）
     private var artistText: String {
-        if let artist = track.albumArtist, !artist.isEmpty { return artist }
-        return track.album ?? ""
+        if let artist = track.artistName, !artist.isEmpty { return artist }
+        return track.albumTitle ?? ""
     }
 
     private var accessibilityLabel: String {
         var parts: [String] = []
         if showsIndex { parts.append("第 \(index + 1) 首") }
-        parts.append(track.name ?? "未知曲目")
+        parts.append(track.title)
         let sub = style == .alignedTable ? albumArtistText : (artistColumnWidth == nil ? subtitleText : artistText)
         if !sub.isEmpty { parts.append(sub) }
-        parts.append(formatPlaybackTime(track.runtimeSeconds))
+        parts.append(formatPlaybackTime(track.duration))
         if isCurrent { parts.append(isPlaying ? "播放中" : "已暂停") }
         return parts.joined(separator: "，")
     }
@@ -957,7 +1013,7 @@ extension LayoutSizeClass {
 // MARK: - 列表模式曲目行（高 48；选中 = surfaceSelected + 3pt 指示条 + 主色标题）
 
 struct MusicRow: View {
-    let track: BaseItemDto
+    let track: MediaItem
     let index: Int
     let metrics: TrackRowMetrics
     var isCurrent = false
@@ -987,14 +1043,14 @@ struct MusicRow: View {
                     indexColumn
 
                     if metrics.showsCover {
-                        RemoteImage(url: track.artworkURL(width: 96), contentMode: .fill)
+                        RemoteImage(ref: track.artworkRef(width: 96), contentMode: .fill)
                             .frame(width: metrics.cover, height: metrics.cover)
                             .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.sm))
                             .padding(.trailing, Theme.Spacing.lg)
                     }
 
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(track.name ?? "")
+                        Text(track.title)
                             .textStyle(.bodySM, weight: isCurrent ? .semibold : .medium,
                                        color: isCurrent ? Theme.brandText : Theme.textPrimary)
                             .lineLimit(1)
@@ -1007,14 +1063,14 @@ struct MusicRow: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                     if let albumWidth = metrics.album {
-                        Text(track.album ?? "")
+                        Text(track.albumTitle ?? "")
                             .textStyle(.footnote, color: Theme.textSecondary)
                             .lineLimit(1)
                             .frame(width: albumWidth, alignment: .leading)
                             .padding(.trailing, Theme.Spacing.md)
                     }
 
-                    Text(formatPlaybackTime(track.runtimeSeconds))
+                    Text(formatPlaybackTime(track.duration))
                         .textStyle(.mono, color: Theme.textSecondary)
                         .frame(width: metrics.duration, alignment: .trailing)
                 }
@@ -1122,22 +1178,22 @@ struct MusicRow: View {
 
     private var subtitle: String {
         var parts: [String] = []
-        if let sub = track.albumArtist ?? track.album, !sub.isEmpty {
+        if let sub = track.artistName ?? track.albumTitle, !sub.isEmpty {
             parts.append(sub)
         }
-        if metrics.album == nil, let album = track.album, album != track.albumArtist {
+        if metrics.album == nil, let album = track.albumTitle, album != track.artistName {
             parts.append(album)
         }
-        if let count = track.userData?.playCount, count > 0 {
-            parts.append("播放 \(count) 次")
+        if track.userData.playCount > 0 {
+            parts.append("播放 \(track.userData.playCount) 次")
         }
         return parts.joined(separator: " · ")
     }
 
     private var accessibilityLabel: String {
-        var parts = ["第 \(index + 1) 首", track.name ?? "未知曲目"]
-        if let artist = track.albumArtist ?? track.album { parts.append(artist) }
-        parts.append(formatPlaybackTime(track.runtimeSeconds))
+        var parts = ["第 \(index + 1) 首", track.title]
+        if let artist = track.artistName ?? track.albumTitle { parts.append(artist) }
+        parts.append(formatPlaybackTime(track.duration))
         return parts.joined(separator: "，")
     }
 
@@ -1158,8 +1214,8 @@ struct MusicRow: View {
         Button {
             Task { await MusicDataStore.shared.toggleFavorite(track) }
         } label: {
-            Label(track.userData?.isFavorite == true ? "取消收藏" : "收藏",
-                  systemImage: track.userData?.isFavorite == true ? "heart.slash" : "heart")
+            Label(track.isFavorite ? "取消收藏" : "收藏",
+                  systemImage: track.isFavorite ? "heart.slash" : "heart")
         }
     }
 }
@@ -1241,7 +1297,7 @@ struct TrackTableHeader: View {
 
 /// 曲目行集合（不含表头，供详情页拼进吸顶 Section）
 struct TrackTableRows: View {
-    let tracks: [BaseItemDto]
+    let tracks: [MediaItem]
     let sizeClass: LayoutSizeClass
     var showsArtist = false
     let onTap: (Int) -> Void
@@ -1250,8 +1306,8 @@ struct TrackTableRows: View {
 
     var body: some View {
         // 用 indices + 下标，而不是 `Array(tracks.enumerated())`：
-        // 后者每次渲染都要物化一个 (offset, BaseItemDto) 元组数组 —— BaseItemDto 约 272 字节，
-        // 整库（数千首）就是每次渲染 1MB 级别的 memcpy 加逐元素 ARC 保留/释放（实测 1 万条约 1ms）。
+        // 后者每次渲染都要物化一个 (offset, MediaItem) 元组数组 —— MediaItem 含十余个字段，
+        // 整库（数千首）就是每次渲染接近 1MB 的 memcpy 与逐元素 ARC 保留/释放（实测 1 万条约 1ms）。
         // 这里的 ForEach 只用于渲染行，位置即身份，不依赖稳定 id 做增删动画。
         ForEach(tracks.indices, id: \.self) { index in
             TrackTableRow(
@@ -1280,7 +1336,7 @@ struct TrackTableRows: View {
 
 /// 表头 + 曲目行（非吸顶场景的便捷组合）
 struct TrackTable: View {
-    let tracks: [BaseItemDto]
+    let tracks: [MediaItem]
     let sizeClass: LayoutSizeClass
     /// 是否显示副标题（艺术家）
     var showArtist = false
@@ -1296,7 +1352,7 @@ struct TrackTable: View {
 }
 
 private struct TrackTableRow: View {
-    let track: BaseItemDto
+    let track: MediaItem
     let index: Int
     let sizeClass: LayoutSizeClass
     let isCurrent: Bool
@@ -1335,11 +1391,11 @@ private struct TrackTableRow: View {
                     .frame(width: 56, alignment: .leading)
 
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(track.name ?? "")
+                        Text(track.title)
                             .textStyle(.bodySM, weight: isCurrent ? .semibold : .regular,
                                        color: isCurrent ? Theme.brandText : Theme.textPrimary)
                             .lineLimit(1)
-                        if showArtist, let artist = track.albumArtist ?? track.album, !artist.isEmpty {
+                        if showArtist, let artist = track.artistName ?? track.albumTitle, !artist.isEmpty {
                             Text(artist)
                                 .textStyle(.caption, color: Theme.textSecondary)
                                 .lineLimit(1)
@@ -1348,13 +1404,13 @@ private struct TrackTableRow: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                     if showArtist {
-                        Text(track.album ?? "")
+                        Text(track.albumTitle ?? "")
                             .textStyle(.caption, color: Theme.textSecondary)
                             .lineLimit(1)
                             .frame(width: 180, alignment: .leading)
                     }
 
-                    Text(formatPlaybackTime(track.runtimeSeconds))
+                    Text(formatPlaybackTime(track.duration))
                         .textStyle(.mono, color: Theme.textSecondary)
                         .frame(width: 64, alignment: .trailing)
                 }
@@ -1438,9 +1494,9 @@ private struct TrackTableRow: View {
     }
 
     private var accessibilityLabel: String {
-        var parts = ["第 \(index + 1) 首", track.name ?? "未知曲目"]
-        if let artist = track.albumArtist { parts.append(artist) }
-        parts.append(formatPlaybackTime(track.runtimeSeconds))
+        var parts = ["第 \(index + 1) 首", track.title]
+        if let artist = track.artistName { parts.append(artist) }
+        parts.append(formatPlaybackTime(track.duration))
         return parts.joined(separator: "，")
     }
 }
@@ -1457,7 +1513,7 @@ struct PlaylistCard: View {
     @ObservedObject private var playlistStore = PlaylistStore.shared
     @State private var hovered = false
     /// 封面拼图的 4 首曲目缓存：数据变化时重算一次
-    @State private var coverTracks: [BaseItemDto] = []
+    @State private var coverTracks: [MediaItem] = []
     @Environment(\.appReduceMotion) private var reduceMotion
     @FocusState private var focused: Bool
 
@@ -1477,7 +1533,7 @@ struct PlaylistCard: View {
         }
         // 取满 4 首即停：与「全量 compactMap 后 prefix(4)」结果一致，
         // 但命中时只做 4 次查找（曲目 id 失效时会继续往后找，语义不变）
-        var picked: [BaseItemDto] = []
+        var picked: [MediaItem] = []
         picked.reserveCapacity(4)
         for id in playlist.trackIds {
             guard let track = store.track(id: id) else { continue }
@@ -1587,10 +1643,10 @@ struct PlaylistCard: View {
         }
     }
 
-    private func coverThumb(_ track: BaseItemDto?, size: CGFloat) -> some View {
+    private func coverThumb(_ track: MediaItem?, size: CGFloat) -> some View {
         Group {
             if let track {
-                RemoteImage(url: track.artworkURL(width: 200), contentMode: .fill)
+                RemoteImage(ref: track.artworkRef(width: 200), contentMode: .fill)
                     .frame(width: size, height: size)
                     .clipped()
             } else {
@@ -1605,7 +1661,7 @@ struct PlaylistCard: View {
 // MARK: - 播放列表图标（2×2 拼图，详情页头部用）
 
 struct PlaylistCoverMosaic: View {
-    let tracks: [BaseItemDto]
+    let tracks: [MediaItem]
     var size: CGFloat
     var cornerRadius: CGFloat = Theme.Radius.lg
     var fallbackIcon: String = "music.note.list"
@@ -1645,8 +1701,8 @@ struct PlaylistCoverMosaic: View {
         .paperCoverFrame(Theme.isPaper, cornerRadius: cornerRadius)
     }
 
-    private func thumb(_ track: BaseItemDto?, size: CGFloat) -> some View {
-        RemoteImage(url: track?.artworkURL(width: 200), contentMode: .fill)
+    private func thumb(_ track: MediaItem?, size: CGFloat) -> some View {
+        RemoteImage(ref: track?.artworkRef(width: 200), contentMode: .fill)
             .frame(width: size, height: size)
             .clipped()
     }
