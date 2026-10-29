@@ -677,7 +677,7 @@ struct SettingsView: View {
         Shortcut(title: "播放 / 暂停", keys: ["空格"]),
         Shortcut(title: "下一曲 / 上一曲", keys: ["⌘→", "⌘←"]),
         Shortcut(title: "返回上一级 / 收起抽屉", keys: ["⌘[", "Esc"]),
-        Shortcut(title: "切换一级页", keys: ["⌘1", "⌘5"], joiner: "…"),
+        Shortcut(title: "切换一级页", keys: ["⌘1", "⌘4"], joiner: "…"),
         Shortcut(title: "打开设置", keys: ["⌘,"]),
         Shortcut(title: "上移 / 下移选中曲目", keys: ["⌘↑", "⌘↓"]),
         Shortcut(title: "刷新媒体库", keys: ["⌘R"]),
@@ -992,47 +992,121 @@ private struct ScrobbleField: View {
     }
 }
 
-// MARK: - 下拉（§4.5：高 32、圆角 10，选中打勾；弹出层用共享 `TokenMenu`）
+// MARK: - 下拉（自定义字段 + 原生 NSMenu：命中区 180×44、无气泡箭头）
 
+/// 设置页下拉选择。
+///
+/// 2026-10-29 的收敛过程：
+/// - SwiftUI `Menu` 透明 label：鼠标命中不稳定（要么只有左上角，要么完全点不动）；
+/// - `Button + popover`：点击可靠，但弹层是带箭头的系统气泡，和方形字段「又圆又方」；
+/// - 原生 `Picker`：字段与菜单成套，但字段只有 24pt 高，命中区偏小。
+///
+/// 最终选择「自定义字段 + Button + 原生 NSMenu」：字段是 168×32 的圆角矩形，外面套
+/// 180×44 的 Button 命中区；点按时用 AppKit 在原位弹出原生菜单（无箭头、无气泡），
+/// 菜单与字段同属 macOS 控件语言，视觉协调，点击面积也比系统 Picker 大。
 private struct SettingsMenu: View {
     let selection: String
     let options: [String]
     let accessibilityLabel: String
     let onSelect: (String) -> Void
 
+    @State private var hovered = false
+
+    private var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous)
+    }
+
     var body: some View {
-        TokenMenu(accessibilityLabel: accessibilityLabel) {
-            ForEach(options, id: \.self) { option in
-                Button {
-                    onSelect(option)
-                } label: {
-                    if option == selection {
-                        Label(option, systemImage: "checkmark")
-                    } else {
-                        Text(option)
-                    }
-                }
-            }
+        Button {
+            presentMenu()
         } label: {
-            HStack(spacing: Theme.Spacing.sm) {
-                Text(selection)
-                    .textStyle(.bodySM, color: Theme.textPrimary)
-                    .lineLimit(1)
-                Image(systemName: "chevron.down")
-                    .textStyle(.caption, color: Theme.textTertiary)
-            }
-            .padding(.horizontal, Theme.Spacing.lg)
-            .frame(height: Theme.Size.fieldHeight)
-            .frame(minWidth: 108, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: Theme.Radius.md)
-                    .fill(Theme.surface)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.Radius.md)
-                    .strokeBorder(Theme.borderDefault)
-            )
+            // 可见字段 168×32 + 四边 6pt = 180×44 的点击区
+            field
+                .frame(width: 168, height: Theme.Size.fieldHeight)
+                .background(shape.fill(fillColor))
+                .overlay {
+                    shape.strokeBorder(borderColor, lineWidth: 1)
+                }
+                .clipShape(shape)
+                .padding(6)
+                .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .frame(width: 180, height: 44)
+        .onHover { hovered = $0 }
+        .animation(Theme.Motion.micro, value: hovered)
+        .help(accessibilityLabel)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityValue(selection)
+        .accessibilityHint("打开选项菜单")
+    }
+
+    private var field: some View {
+        HStack(spacing: Theme.Spacing.sm) {
+            Text(selection)
+                .textStyle(.bodySM, weight: .medium, color: Theme.textPrimary)
+                .lineLimit(1)
+            Spacer(minLength: Theme.Spacing.md)
+            Image(systemName: "chevron.down")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(hovered ? Theme.textSecondary : Theme.textTertiary)
+        }
+        .padding(.horizontal, Theme.Spacing.lg)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    }
+
+    /// 用原生 `NSMenu` 弹出选项：无气泡 / 箭头，视觉与字段同族。
+    ///
+    /// `popUp` 会阻塞到菜单关闭；target 由局部常量持有，菜单存活期间不会释放。
+    private func presentMenu() {
+        let target = SettingsMenuActionTarget { option in
+            onSelect(option)
+        }
+        let menu = NSMenu()
+        for option in options {
+            let item = NSMenuItem(
+                title: option,
+                action: #selector(SettingsMenuActionTarget.select(_:)),
+                keyEquivalent: ""
+            )
+            item.target = target
+            item.representedObject = option
+            item.state = option == selection ? .on : .off
+            menu.addItem(item)
+        }
+        // 原生菜单在鼠标位置稍下方弹出（点字段时鼠标就在字段上），不需要再算屏幕坐标；
+        // 菜单宽度由标题自适应，左边用一点缩进保持与字段文字对齐。
+        var point = NSEvent.mouseLocation
+        point.y -= 14 // 让菜单落在指针下方，不盖住字段
+        menu.popUp(positioning: nil, at: point, in: nil)
+    }
+
+    private var fillColor: Color {
+        if Theme.isPaper {
+            return hovered ? Theme.Paper.hover : Theme.Paper.sunken
+        }
+        return hovered ? Theme.surfaceHover : Theme.surfaceSunken
+    }
+
+    private var borderColor: Color {
+        if Theme.isPaper {
+            return Theme.Paper.hairlineStrong
+        }
+        return hovered ? Theme.borderStrong : Theme.borderDefault
+    }
+}
+
+/// NSMenu 的 target：把菜单项选择回传给 SwiftUI。
+private final class SettingsMenuActionTarget: NSObject {
+    private let handler: (String) -> Void
+
+    init(_ handler: @escaping (String) -> Void) {
+        self.handler = handler
+    }
+
+    @objc func select(_ item: NSMenuItem) {
+        guard let option = item.representedObject as? String else { return }
+        handler(option)
     }
 }
 
